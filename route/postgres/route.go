@@ -11,13 +11,16 @@ func RegisterRoutes(app *fiber.App) {
 
 	api := app.Group("/api/v1")
 
-	// ===== User Routes =====
+	// ===== Repositori & Service =====
 	userRepo := repository.NewUserRepository()
 	userService := service.NewUserService(userRepo)
-	SetupUserRoutes(api, userService)
 
-	// ===== Auth Routes =====
 	authRepo := repository.NewAuthRepository()
 	authService := service.NewAuthService(authRepo)
+
+	// ===== User Routes =====
+	SetupUserRoutes(api, userService, authService) // kirim juga authService
+
+	// ===== Auth Routes =====
 	SetupAuthRoutes(api, authService)
 }

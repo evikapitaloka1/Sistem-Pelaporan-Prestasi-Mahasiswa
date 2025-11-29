@@ -1,24 +1,20 @@
-package routes
+package middleware
 
 import (
-	"net/http"
 	"strings"
-
 	"uas/app/model/postgres"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
 )
 
 var jwtSecret = []byte("SECRET_KEY")
 
-func JWTMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
+func JWTMiddleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		authHeader := c.Get("Authorization")
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
-			c.Abort()
-			return
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Authorization header required"})
 		}
 
 		tokenStr := strings.Replace(authHeader, "Bearer ", "", 1)
@@ -26,19 +22,17 @@ func JWTMiddleware() gin.HandlerFunc {
 			return jwtSecret, nil
 		})
 		if err != nil || !token.Valid {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "token tidak valid"})
-			c.Abort()
-			return
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "token tidak valid"})
 		}
 
 		claims, ok := token.Claims.(*model.UserClaims)
 		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "claims token tidak valid"})
-			c.Abort()
-			return
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "claims token tidak valid"})
 		}
 
-		c.Set("userID", claims.UserID)
-		c.Next()
+		c.Locals("userID", claims.UserID)
+		c.Locals("role", claims.Role)
+		c.Locals("permissions", claims.Permissions)
+		return c.Next()
 	}
 }
