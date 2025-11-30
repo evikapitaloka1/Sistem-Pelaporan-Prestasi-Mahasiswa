@@ -6,7 +6,6 @@ import (
 	model "uas/app/model/postgres"
 	"errors"
 	"github.com/lib/pq"
-
 	"github.com/google/uuid"
 )
 
@@ -45,7 +44,7 @@ func (r *authRepo) GetByUsername(ctx context.Context, username string) (*model.U
 	var u model.UserData
 	var passwordHash string
 
-	err := db.DB.QueryRowContext(ctx, query, username).Scan(
+	err := db.GetDB().QueryRowContext(ctx, query, username).Scan(
 		&u.ID,
 		&u.Username,
 		&u.FullName,
@@ -77,7 +76,7 @@ func (r *authRepo) GetByID(ctx context.Context, id uuid.UUID) (*model.UserData, 
 
 	var u model.UserData
 
-	err := db.DB.QueryRowContext(ctx, query, id).Scan(
+	err := db.GetDB().QueryRowContext(ctx, query, id).Scan(
 		&u.ID,
 		&u.Username,
 		&u.FullName,

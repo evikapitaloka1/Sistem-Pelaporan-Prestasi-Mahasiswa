@@ -1,25 +1,34 @@
-package mongo
+package mongodb
 
 import (
-	"context"
-	"os"
-	"time"
+    "context"
+    "log"
+    "time"
 
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+    "go.mongodb.org/mongo-driver/mongo"
+    "go.mongodb.org/mongo-driver/mongo/options"
 )
 
-func ConnectMongo() (*mongo.Database, error) {
-	uri := os.Getenv("MONGO_URI")
-	dbName := os.Getenv("MONGO_DB")
+var Client *mongo.Client
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+func Connect() {
+    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
 
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
-	if err != nil {
-		return nil, err
-	}
+    client, err := mongo.Connect(ctx, options.Client().ApplyURI("mongodb://localhost:27017"))
+    if err != nil {
+        log.Fatal("MongoDB connection failed:", err)
+    }
 
-	return client.Database(dbName), nil
+    err = client.Ping(ctx, nil)
+    if err != nil {
+        log.Fatal("MongoDB ping failed:", err)
+    }
+
+    Client = client
+    log.Println("MongoDB berhasil connect ke database 'uas'")
+}
+
+func GetCollection(dbName, collName string) *mongo.Collection {
+    return Client.Database(dbName).Collection(collName)
 }

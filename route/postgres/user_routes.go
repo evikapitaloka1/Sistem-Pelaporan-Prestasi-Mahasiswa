@@ -2,7 +2,7 @@ package routes
 
 import (
 	"uas/app/service/postgres"
-	"uas/middleware/postgres"
+	"uas/middleware"
 	"uas/app/model/postgres"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"

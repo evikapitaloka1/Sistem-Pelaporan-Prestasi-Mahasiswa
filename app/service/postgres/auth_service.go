@@ -22,6 +22,7 @@ type IAuthService interface {
 	Logout(ctx context.Context) error
 	Profile(ctx context.Context, userID uuid.UUID) (*model.UserData, error)
 	HasPermission(ctx context.Context, userID uuid.UUID, permission string) (bool, error)
+
 }
 
 // ================= STRUCT =================
@@ -123,8 +124,11 @@ func (s *AuthService) Profile(ctx context.Context, userID uuid.UUID) (*model.Use
 	return s.repo.GetByID(ctx, userID)
 }
 
+
 // ================= HAS PERMISSION =================
 func (s *AuthService) HasPermission(ctx context.Context, userID uuid.UUID, permission string) (bool, error) {
+    // Di sini 'user' sudah digunakan oleh user.Permissions di loop bawah, 
+    // jadi error "declared but not used" seharusnya hilang saat file dikompilasi seluruhnya.
 	user, err := s.repo.GetByID(ctx, userID)
 	if err != nil {
 		return false, err
@@ -137,3 +141,4 @@ func (s *AuthService) HasPermission(ctx context.Context, userID uuid.UUID, permi
 	}
 	return false, nil
 }
+

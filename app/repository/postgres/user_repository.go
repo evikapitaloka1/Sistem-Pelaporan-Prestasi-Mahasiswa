@@ -2,17 +2,16 @@ package repository
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 
 	db "uas/database/postgres"
 	model "uas/app/model/postgres"
-	"errors"
-	
 
 	"github.com/google/uuid"
 )
 
 // ================= INTERFACE =================
-
 type UserRepository interface {
 	ListUsers(ctx context.Context) ([]model.User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (*model.User, error)
@@ -23,7 +22,6 @@ type UserRepository interface {
 }
 
 // ================= IMPLEMENTATION =================
-
 type userRepo struct{}
 
 // constructor
@@ -43,7 +41,7 @@ func (r *userRepo) ListUsers(ctx context.Context) ([]model.User, error) {
 		ORDER BY u.created_at DESC;
 	`
 
-	rows, err := db.DB.QueryContext(ctx, query)
+	rows, err := db.GetDB().QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -53,6 +51,8 @@ func (r *userRepo) ListUsers(ctx context.Context) ([]model.User, error) {
 
 	for rows.Next() {
 		var u model.User
+		var createdAt, updatedAt sql.NullTime
+
 		err := rows.Scan(
 			&u.ID,
 			&u.Username,
@@ -62,12 +62,20 @@ func (r *userRepo) ListUsers(ctx context.Context) ([]model.User, error) {
 			&u.RoleID,
 			&u.RoleName,
 			&u.IsActive,
-			&u.CreatedAt,
-			&u.UpdatedAt,
+			&createdAt,
+			&updatedAt,
 		)
 		if err != nil {
 			return nil, err
 		}
+
+		if createdAt.Valid {
+			u.CreatedAt = createdAt.Time
+		}
+		if updatedAt.Valid {
+			u.UpdatedAt = updatedAt.Time
+		}
+
 		users = append(users, u)
 	}
 
@@ -85,8 +93,9 @@ func (r *userRepo) GetUserByID(ctx context.Context, id uuid.UUID) (*model.User, 
 	`
 
 	var u model.User
+	var createdAt, updatedAt sql.NullTime
 
-	err := db.DB.QueryRowContext(ctx, query, id).Scan(
+	err := db.GetDB().QueryRowContext(ctx, query, id).Scan(
 		&u.ID,
 		&u.Username,
 		&u.Email,
@@ -95,12 +104,18 @@ func (r *userRepo) GetUserByID(ctx context.Context, id uuid.UUID) (*model.User, 
 		&u.RoleID,
 		&u.RoleName,
 		&u.IsActive,
-		&u.CreatedAt,
-		&u.UpdatedAt,
+		&createdAt,
+		&updatedAt,
 	)
-
 	if err != nil {
 		return nil, err
+	}
+
+	if createdAt.Valid {
+		u.CreatedAt = createdAt.Time
+	}
+	if updatedAt.Valid {
+		u.UpdatedAt = updatedAt.Time
 	}
 
 	return &u, nil
@@ -108,14 +123,13 @@ func (r *userRepo) GetUserByID(ctx context.Context, id uuid.UUID) (*model.User, 
 
 func (r *userRepo) CreateUser(ctx context.Context, req model.CreateUserRequest) (uuid.UUID, error) {
 	query := `
-		INSERT INTO users (username, email, password_hash, full_name, role_id, is_active)
-		VALUES ($1, $2, $3, $4, $5, true)
+		INSERT INTO users (username, email, password_hash, full_name, role_id, is_active, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, true, NOW(), NOW())
 		RETURNING id;
 	`
 
 	var id uuid.UUID
-
-	err := db.DB.QueryRowContext(ctx, query,
+	err := db.GetDB().QueryRowContext(ctx, query,
 		req.Username,
 		req.Email,
 		req.Password,
@@ -140,7 +154,7 @@ func (r *userRepo) UpdateUser(ctx context.Context, id uuid.UUID, req model.Updat
 		WHERE id=$4;
 	`
 
-	res, err := db.DB.ExecContext(ctx, query,
+	res, err := db.GetDB().ExecContext(ctx, query,
 		req.Username,
 		req.Email,
 		req.FullName,
@@ -150,7 +164,6 @@ func (r *userRepo) UpdateUser(ctx context.Context, id uuid.UUID, req model.Updat
 		return err
 	}
 
-	// cek apakah ada row yang ter-update
 	rowsAffected, err := res.RowsAffected()
 	if err != nil {
 		return err
@@ -162,15 +175,14 @@ func (r *userRepo) UpdateUser(ctx context.Context, id uuid.UUID, req model.Updat
 	return nil
 }
 
-
 func (r *userRepo) DeleteUser(ctx context.Context, id uuid.UUID) error {
 	query := `DELETE FROM users WHERE id=$1;`
-	_, err := db.DB.ExecContext(ctx, query, id)
+	_, err := db.GetDB().ExecContext(ctx, query, id)
 	return err
 }
 
 func (r *userRepo) UpdateUserRole(ctx context.Context, id uuid.UUID, roleID uuid.UUID) error {
 	query := `UPDATE users SET role_id=$1 WHERE id=$2;`
-	_, err := db.DB.ExecContext(ctx, query, roleID, id)
+	_, err := db.GetDB().ExecContext(ctx, query, roleID, id)
 	return err
 }

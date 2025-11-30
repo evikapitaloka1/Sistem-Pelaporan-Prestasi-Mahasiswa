@@ -1,15 +1,29 @@
 package main
 
 import (
-	"uas/route/postgres"
 	db "uas/database/postgres"
+	mongodb "uas/database/mongo"
+
+	postgresRoutes "uas/route/postgres"
+	mongoRoutes "uas/route/mongo"
+
 	"github.com/gofiber/fiber/v2"
 )
 
 func main() {
-	db.Connect() // wajib dipanggil dulu sebelum pake repository/service
+    db.Connect()
+    mongodb.Connect()
 
-	app := fiber.New()
-	routes.RegisterRoutes(app)
-	app.Listen(":8080")
+    app := fiber.New()
+
+    // Route PostgreSQL
+    postgresRoutes.RegisterRoutes(app)
+
+    // Ambil collection MongoDB
+    achievementColl := mongodb.GetCollection("uas", "achievements")
+
+    // Route MongoDB Achievement
+    mongoRoutes.RegisterRoutesMongo(app, achievementColl, db.GetDB())
+
+    app.Listen(":8080")
 }
