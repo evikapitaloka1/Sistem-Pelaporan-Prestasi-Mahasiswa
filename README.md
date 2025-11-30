@@ -82,8 +82,3 @@ Berikut adalah draf *README* yang sudah diperbaiki, bersih dari kode sitasi yang
 
 ---
 
-**[Tambahkan instruksi *setup* lingkungan lokal di sini]**
-
----
-
-Apakah draf *README* ini sudah sesuai dengan yang Anda inginkan?
