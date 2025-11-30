@@ -39,6 +39,8 @@ type AchievementService interface {
 	RejectAchievement(ctx context.Context, id string, lecturerID uuid.UUID, note string) error
 	
 	GetAchievementStatistics(ctx context.Context, role string, userID uuid.UUID) (interface{}, error)
+
+	UpdateAchievement(ctx context.Context, id string, userID uuid.UUID, userRole string, req models.AchievementRequest) error
 }
 
 // =========================================================
@@ -448,4 +450,84 @@ func (s *AchievementServiceImpl) GetAchievementStatistics(ctx context.Context, r
 	return map[string]string{
 		"message": "Endpoint statistik masih dalam pengembangan (FR-011). Perlu implementasi agregasi di layer Repository/Database.",
 	}, nil
+}
+
+// Di dalam AchievementServiceImpl struct:
+// ...
+
+// SubmitForVerification: Mengubah status 'draft' menjadi 'submitted' (FR-004)
+// ... (fungsi SubmitForVerification yang sudah ada)
+
+// UpdateAchievement: Mengubah detail prestasi di MongoDB (FR-005 - Implisit)
+// File: uas/app/service/mongo/achievement_service.go (UpdateAchievement)
+
+func (s *AchievementServiceImpl) UpdateAchievement(
+    ctx context.Context, 
+    mongoAchievementID string, 
+    userID uuid.UUID, 
+    userRole string, 
+    req models.AchievementRequest,
+) error {
+    
+    // 1. Dapatkan Reference (Postgre) untuk cek status dan pemilik
+    ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
+    if err != nil {
+        return errors.New("prestasi tidak ditemukan atau ID tidak valid") 
+    }
+    
+    // 2. LOGIKA VALIDASI
+    
+    // Asumsi hak akses update diberikan default ke Admin. 
+    canUpdate := false 
+    
+    if userRole == "Admin" {
+        canUpdate = true // Admin selalu diizinkan
+    } else {
+        // --- Validasi untuk Mahasiswa dan Dosen Wali ---
+
+        // Precondition 1: Hanya boleh diedit jika status 'draft'
+        if ref.Status != models.StatusDraft {
+            return errors.New("prestasi hanya bisa diupdate jika berstatus 'draft'")
+        }
+        
+        // Precondition 2: Cek Kepemilikan (Hanya Mahasiswa pemilik yang boleh)
+        studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
+        if err != nil {
+            return errors.New("user is not associated with a student profile") 
+        }
+        if studentID == ref.StudentID {
+            canUpdate = true // Mahasiswa pemilik diizinkan
+        }
+    }
+    
+    // Jika tidak ada izin setelah semua pemeriksaan
+    if !canUpdate {
+        return errors.New("forbidden: tidak memiliki hak untuk mengupdate prestasi ini")
+    }
+
+    // 3. UPDATE DATABASE (Kode inti update sekarang dijalankan di luar goto)
+    
+    // Konversi string ID ke ObjectID
+    mongoID, err := primitive.ObjectIDFromHex(mongoAchievementID) // Variabel yang mungkin dilompati
+    if err != nil {
+        return errors.New("ID MongoDB tidak valid")
+    }
+    
+    // 4. Siapkan Data Update
+    updateData := primitive.M{
+        "title": req.Title,
+        "description": req.Description,
+        "achievementType": req.AchievementType,
+        "tags": req.Tags,
+        "points": req.Points,
+        "details": req.Details,
+        "updated_at": time.Now(),
+    }
+    
+    // 5. Panggil Mongo Repository
+    if err := s.MongoRepo.UpdateByID(ctx, mongoID, updateData); err != nil {
+        return fmt.Errorf("gagal update di MongoDB: %w", err)
+    }
+
+    return nil
 }

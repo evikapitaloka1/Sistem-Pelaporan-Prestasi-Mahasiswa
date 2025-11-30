@@ -132,10 +132,44 @@ func AchievementRoutes(
 		return c.Status(http.StatusCreated).JSON(fiber.Map{"status": "success", "data": result})
 	})
 
-	achievements.Put("/:id", rbacUpdate, func(c *fiber.Ctx) error {
-		return c.SendString("Update Achievement Endpoint")
-	})
+	// File: uas/route/mongo/achievement.go
 
+achievements.Put("/:id", rbacUpdate, func(c *fiber.Ctx) error {
+    // 1. Ambil ID MongoDB dari parameter
+    achievementID := c.Params("id")
+    if len(achievementID) != 24 {
+        return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid achievement ID format (Expected 24-char ObjectID)"})
+    }
+    
+    // 2. Ambil User ID dan Role dari context
+    userID, err := getUserID(c)
+    if err != nil {
+        return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+    }
+    
+    userRole, err := getRole(c) // Asumsi getRole sudah ada di file ini
+    if err != nil {
+        return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+    }
+
+    // 3. Parsing Request Body
+    var req models.AchievementRequest
+    if err := c.BodyParser(&req); err != nil {
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body", "details": err.Error()})
+    }
+
+    // 4. Panggil Service Layer
+    // NOTE: Pastikan AchievementService interface Anda sudah diupdate!
+    err = achievementSvc.UpdateAchievement(c.Context(), achievementID, userID, userRole, req)
+    
+    if err != nil {
+        // Tangani error spesifik dari service (misal: "forbidden", "not found", "status draft required")
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+    }
+
+    // 5. Sukses
+    return c.JSON(fiber.Map{"status": "success", "message": "Achievement updated successfully"})
+})
 	achievements.Delete("/:id", rbacDelete, func(c *fiber.Ctx) error {
 		// ✅ PERBAIKAN: Ambil ID sebagai string (MongoDB ObjectID)
 		achievementID := c.Params("id")
