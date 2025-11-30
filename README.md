@@ -1,8 +1,4 @@
-Saya mohon maaf atas ketidaknyamanan ini. Sepertinya ada kesalahan teknis pada respons sebelumnya yang menyebabkan munculnya teks **``** dan format sitasi yang kurang rapi di dalam daftar (*bullet points*).
 
-Ini adalah bagian dari draf *README* yang saya berikan sebelumnya, dan seharusnya terlihat bersih dan terstruktur.
-
-Berikut adalah draf *README* yang sudah diperbaiki, bersih dari kode sitasi yang mengganggu, dan siap Anda gunakan di GitHub:
 
 ---
 
