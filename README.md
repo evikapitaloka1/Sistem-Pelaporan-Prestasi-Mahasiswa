@@ -78,7 +78,7 @@ Berikut adalah draf *README* yang sudah diperbaiki, bersih dari kode sitasi yang
 ### Rencana Tambahan
 
 * **Pengujian:** Menggunakan **Unit Testing** untuk menguji fungsi dan *method* individual.
-* **Repositori:** Proyek akan menggunakan **Github Repository**.
+
 
 ---
 
