@@ -3,7 +3,8 @@ package routes
 import (
 	"errors"
 	"net/http"
-
+	"time" // ✅ Tambahkan ini
+    "fmt"  // ✅ Tambahkan ini
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid" // Tetap dipakai untuk userID
 
@@ -325,5 +326,59 @@ achievements.Post("/:id/submit", func(c *fiber.Ctx) error {
         return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
     }
     return c.JSON(fiber.Map{"status": "success", "message": "Achievement submitted for verification"})
+})
+// ... (Kode Achievements.Post("/:id/attachments", rbacUpdate, func(c *fiber.Ctx) error { ... ))
+
+// uas/route/mongo/achievement.go (di dalam achievements.Post("/:id/attachments", ...))
+
+// uas/route/mongo/achievement.go (di dalam achievements.Post("/:id/attachments", ...))
+
+achievements.Post("/:id/attachments", rbacUpdate, func(c *fiber.Ctx) error {
+    // 1. Ambil ID MongoDB
+    achievementID := c.Params("id")
+    if len(achievementID) != 24 {
+        return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid achievement ID format (Expected 24-char ObjectID)"})
+    }
+    
+    // 2. Ambil User ID
+    userID, err := getUserID(c)
+    if err != nil {
+        return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+    }
+    
+    // 3. Ambil File dari Form Data (PENTING: Deklarasikan 'file' di sini)
+    file, err := c.FormFile("file") // <-- DEKLARASI file & err PERTAMA KALI
+    if err != nil {
+        // Baris 344 dan 349 (undefined: file) teratasi
+        return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Failed to upload file or file key 'file' missing", "details": err.Error()})
+    }
+    
+    // 4. Membuat URL dan Attachment Metadata
+    
+    // Baris 349 (undefined: fmt) diasumsikan sudah diperbaiki di import
+    fileUrl := fmt.Sprintf("http://storage-server/path/%s/%s", achievementID, file.Filename) 
+    
+    // Baris 353 (undefined: file) teratasi
+    attachment := models.Attachment{ // <-- Variabel 'attachment' dideklarasikan di sini
+        FileName: file.Filename,
+        FileUrl: fileUrl,
+        FileType: file.Header.Get("Content-Type"),
+        UploadedAt: time.Now(), 
+    }
+
+    // 5. Panggil Service Layer
+    // Baris 348 (declared and not used: attachment) teratasi karena 'attachment' sekarang digunakan
+    err = achievementSvc.AddAttachment(c.Context(), achievementID, userID, attachment) 
+
+    if err != nil {
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+    }
+
+    // 6. Sukses
+    return c.Status(http.StatusOK).JSON(fiber.Map{
+        "status": "success", 
+        "message": "File attachment added successfully", 
+        "fileUrl": fileUrl,
+    })
 })
 }

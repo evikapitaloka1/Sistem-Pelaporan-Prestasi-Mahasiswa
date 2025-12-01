@@ -26,7 +26,7 @@ type MongoAchievementRepository interface {
 	UpdateByID(ctx context.Context, id primitive.ObjectID, updateData bson.M) error
 	SoftDeleteByID(ctx context.Context, id primitive.ObjectID) error
 	DeleteByID(ctx context.Context, id primitive.ObjectID) error // Untuk Rollback
-	AddAttachment(ctx context.Context, id primitive.ObjectID, attachment models.Attachment) error
+	AddAttachment(ctx context.Context, id primitive.ObjectID, attachment *models.Attachment) error
 }
 
 type mongoAchievementRepo struct {
@@ -108,15 +108,38 @@ func (r *mongoAchievementRepo) DeleteByID(ctx context.Context, id primitive.Obje
 	return err
 }
 
-func (r *mongoAchievementRepo) AddAttachment(ctx context.Context, id primitive.ObjectID, attachment models.Attachment) error {
-	update := bson.M{
-		"$push": bson.M{"attachments": attachment},
-		"$set": 	bson.M{"updatedAt": time.Now()},
+func (r *mongoAchievementRepo) AddAttachment(ctx context.Context, id primitive.ObjectID, attachment *models.Attachment) error {
+    
+    filter := bson.M{"_id": id}
+
+    // [Langkah 1: Inisialisasi array jika null]
+    initFilter := bson.M{"_id": id, "attachments": nil}
+    initUpdate := bson.M{"$set": bson.M{"attachments": []models.Attachment{}},} 
+    _, err := r.collection.UpdateOne(ctx, initFilter, initUpdate)
+    if err != nil {
+        return fmt.Errorf("mongo failed during array initialization check: %w", err)
+    }
+
+    // [Langkah 2: Push item baru]
+	pushUpdate := bson.M{
+		"$push": bson.M{
+			"attachments": attachment, // Masih berfungsi karena operator $push menerima pointer
+		},
+		"$set": bson.M{
+			"updatedAt": time.Now(), 
+		},
 	}
-	_, err := r.collection.UpdateOne(ctx, bson.M{"_id": id}, update)
+    
+	result, err := r.collection.UpdateOne(ctx, filter, pushUpdate)
+	
 	if err != nil {
-		return fmt.Errorf("mongo add attachment failed: %w", err)
+		return fmt.Errorf("mongo failed to push attachment: %w", err)
 	}
+    
+    if result.MatchedCount == 0 {
+        return errors.New("achievement document not found during push operation")
+    }
+
 	return nil
 }
 

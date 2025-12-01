@@ -34,7 +34,7 @@ type AchievementService interface {
 	RejectAchievement(ctx context.Context, id string, lecturerID uuid.UUID, note string) error
 	
 	GetAchievementStatistics(ctx context.Context, role string, userID uuid.UUID) (interface{}, error)
-	
+	AddAttachment(ctx context.Context, id string, userID uuid.UUID, attachment models.Attachment) error
 	UpdateAchievement(ctx context.Context, id string, userID uuid.UUID, userRole string, req models.AchievementRequest) error
 	GetAchievementHistory(ctx context.Context, id string, userID uuid.UUID, userRole string) ([]models.AchievementReference, error)
 }
@@ -569,4 +569,48 @@ func (s *AchievementServiceImpl) GetAchievementHistory(ctx context.Context, mong
     
     // 4. Kembalikan data riwayat
     return history, nil
+}
+
+
+// uas/app/service/mongo/achievement_service.go
+
+// uas/app/service/mongo/achievement_service.go
+
+func (s *AchievementServiceImpl) AddAttachment(ctx context.Context, mongoAchievementID string, userID uuid.UUID, attachment models.Attachment) error {
+    
+    // 1. Ambil Reference (PostgreSQL) untuk validasi kepemilikan dan status
+    ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
+    if err != nil {
+        return errors.New("prestasi tidak ditemukan atau ID tidak valid")
+    }
+
+    // 2. Validasi Kepemilikan (Hanya pemilik yang bisa menambah attachment)
+    studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
+    if err != nil { 
+        return errors.New("user tidak memiliki profil mahasiswa") 
+    }
+    if studentID != ref.StudentID {
+        return errors.New("forbidden: tidak memiliki hak untuk menambah attachment pada prestasi ini")
+    }
+
+    // 3. Validasi Status (Hanya boleh saat status DRAFT)
+    if ref.Status != models.StatusDraft {
+        return errors.New("attachment hanya bisa ditambahkan saat prestasi berstatus 'draft'")
+    }
+
+    // 4. Konversi ID MongoDB
+    mongoID, err := primitive.ObjectIDFromHex(mongoAchievementID)
+    if err != nil {
+        return errors.New("ID MongoDB tidak valid")
+    }
+    
+    // 5. Panggil Mongo Repository
+    // ✅ Mengatasi error type mismatch: mengirim pointer (&attachment)
+    err = s.MongoRepo.AddAttachment(ctx, mongoID, &attachment) 
+    if err != nil {
+        // Gabungkan error dari repository dan sertakan ID prestasi
+        return fmt.Errorf("gagal menyimpan attachment di MongoDB: %s", err.Error())
+    }
+    
+    return nil
 }
