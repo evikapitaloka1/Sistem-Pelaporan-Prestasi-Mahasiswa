@@ -35,7 +35,7 @@ DeleteAchievement(ctx context.Context, id string, userID uuid.UUID, userRole str
 	// Read Operations
 	GetAchievementDetail(ctx context.Context, id string, userID uuid.UUID, userRole string) (*models.AchievementDetail, error)
 	ListAchievements(ctx context.Context, userRole string, userID uuid.UUID) ([]models.AchievementDetail, error)
-	
+	GetHistoryByMongoID(ctx context.Context, mongoID string) ([]models.AchievementReference, error)
 	GetAchievementStatistics(ctx context.Context, userRole string, userID uuid.UUID) (interface{}, error) 
 }
 
@@ -420,4 +420,68 @@ func (s *AchievementServiceImpl) ListAchievements(ctx context.Context, userRole 
 func (s *AchievementServiceImpl) GetAchievementStatistics(ctx context.Context, role string, userID uuid.UUID) (interface{}, error) {
     // ... (Logika GetAchievementStatistics, asumsikan sudah benar)
     return nil, nil // Placeholder return
+}
+// Di AchievementServiceImpl struct implementation:
+
+func (s *AchievementServiceImpl) GetAchievementHistory(ctx context.Context, mongoAchievementID string, userID uuid.UUID, userRole string) ([]models.AchievementReference, error) {
+    
+    // 1. Ambil Reference (PostgreSQL) untuk mendapatkan StudentID pemilik
+    ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
+    if err != nil {
+        return nil, errors.New("prestasi tidak ditemukan")
+    }
+
+    // 2. LOGIKA OTORISASI (Mirip GetAchievementDetail)
+    role := strings.ToLower(userRole)
+    
+    switch role {
+    case "mahasiswa":
+        studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
+        if err != nil || studentID != ref.StudentID {
+            return nil, errors.New("forbidden: tidak memiliki akses ke riwayat prestasi ini")
+        }
+    case "dosen wali":
+        if err := s.verifyAccessCheck(ctx, ref, userID); err != nil { 
+            return nil, errors.New("forbidden: tidak memiliki akses ke riwayat prestasi ini") 
+        }
+    case "admin":
+        // Admin diizinkan melihat semua riwayat
+        break 
+    default:
+        return nil, errors.New("forbidden: role tidak dapat mengakses riwayat")
+    }
+
+    // 3. Panggil Repository untuk mengambil data history
+    // Asumsi di sini kita hanya mengembalikan referensi tunggal karena tidak ada tabel log terpisah.
+    // Jika Anda punya tabel log, Anda akan memanggilnya di sini.
+    history, err := s.PostgreRepo.GetHistoryByMongoID(ctx, mongoAchievementID)
+    if err != nil {
+        return nil, fmt.Errorf("gagal mengambil riwayat dari database: %w", err)
+    }
+    
+    // Jika hanya satu reference yang dikembalikan, kita kembalikan slice 
+    // berisi referensi status saat ini (sebagai representasi riwayat).
+    return history, nil
+}
+// File: uas/app/service/postgres/achievement_references_service.go
+
+// Pastikan import models sudah benar:
+// import models "uas/app/model/mongo" 
+
+// --- Tambahkan implementasi berikut ke blok implementasi service ---
+
+func (s *AchievementServiceImpl) GetHistoryByMongoID(ctx context.Context, mongoID string) ([]models.AchievementReference, error) {
+    
+    // 1. Panggil Repository Postgre untuk mendapatkan riwayat/referensi
+    // Diasumsikan PostgreRepo sudah memiliki method GetHistoryByMongoID
+    refs, err := s.PostgreRepo.GetHistoryByMongoID(ctx, mongoID)
+    if err != nil {
+        // Handle error seperti data tidak ditemukan atau masalah koneksi
+        return nil, fmt.Errorf("gagal mengambil riwayat referensi dari Postgre: %w", err)
+    }
+
+    // 2. Jika Anda perlu mengambil detail data dari MongoDB untuk setiap referensi,
+    // Anda akan memproses 'refs' di sini. Namun, jika hanya referensi yang dibutuhkan:
+    
+    return refs, nil
 }

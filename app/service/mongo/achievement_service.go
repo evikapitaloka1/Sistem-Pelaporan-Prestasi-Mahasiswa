@@ -34,8 +34,9 @@ type AchievementService interface {
 	RejectAchievement(ctx context.Context, id string, lecturerID uuid.UUID, note string) error
 	
 	GetAchievementStatistics(ctx context.Context, role string, userID uuid.UUID) (interface{}, error)
-
+	
 	UpdateAchievement(ctx context.Context, id string, userID uuid.UUID, userRole string, req models.AchievementRequest) error
+	GetAchievementHistory(ctx context.Context, id string, userID uuid.UUID, userRole string) ([]models.AchievementReference, error)
 }
 // =========================================================
 // ACHIEVEMENT SERVICE IMPLEMENTATION
@@ -523,4 +524,49 @@ func (s *AchievementServiceImpl) GetAchievementStatistics(ctx context.Context, r
 	return map[string]string{
 		"message": "Endpoint statistik masih dalam pengembangan (FR-011). Perlu implementasi agregasi di layer Repository/Database.",
 	}, nil
+}
+// Di AchievementServiceImpl struct implementation:
+
+// Di AchievementServiceImpl struct implementation
+
+func (s *AchievementServiceImpl) GetAchievementHistory(ctx context.Context, mongoAchievementID string, userID uuid.UUID, userRole string) ([]models.AchievementReference, error) {
+    
+    // 1. Ambil Reference (PostgreSQL) untuk mendapatkan StudentID pemilik
+    ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
+    if err != nil { 
+        return nil, errors.New("prestasi tidak ditemukan")
+    }
+
+    // 2. LOGIKA OTORISASI AKSES (RBAC Logic)
+    role := strings.ToLower(userRole)
+    canView := false
+
+    switch role {
+    case "admin":
+        canView = true // Admin diizinkan melihat semua
+        
+    case "mahasiswa":
+        studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
+        if err == nil && studentID == ref.StudentID {
+            canView = true // Mahasiswa hanya boleh melihat miliknya
+        }
+        
+    case "dosen wali":
+        if err := s.verifyAccessCheck(ctx, ref, userID); err == nil {
+            canView = true // Dosen Wali hanya boleh melihat bimbingannya
+        }
+    }
+    
+    if !canView {
+        return nil, errors.New("forbidden: tidak memiliki hak untuk melihat riwayat prestasi ini")
+    }
+
+    // 3. Panggil Repository untuk mengambil data history
+    history, err := s.PostgreRepo.GetHistoryByMongoID(ctx, mongoAchievementID)
+    if err != nil {
+        return nil, fmt.Errorf("gagal mengambil riwayat dari database: %w", err)
+    }
+    
+    // 4. Kembalikan data riwayat
+    return history, nil
 }

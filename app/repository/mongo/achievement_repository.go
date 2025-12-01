@@ -33,7 +33,7 @@ type MongoAchievementRepository interface {
 	
 	// Attachment
 	AddAttachment(ctx context.Context, achievementID primitive.ObjectID, attachment *models.Attachment) error
-
+	
 	
 }
 
@@ -172,11 +172,13 @@ type PostgreAchievementRepository interface {
 	
 	// Tambahan untuk Dosen Wali (FR-006)
 	GetAdviseeIDs(ctx context.Context, lecturerID uuid.UUID) ([]uuid.UUID, error) 
-	
-	// ✅ SOFT DELETE: Status Update
+	GetLecturerProfileID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) 
 	UpdateReferenceForDelete(ctx context.Context, refID uuid.UUID, status models.AchievementStatus) error
-	GetLecturerProfileID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error)
+	GetHistoryByMongoID(ctx context.Context, mongoID string) ([]models.AchievementReference, error)
+
 }
+	// ✅ SOFT DELETE: Status Update
+	
 
 type postgreAchievementRepo struct {
 	db *sql.DB
@@ -407,23 +409,66 @@ func (r *postgreAchievementRepo) UpdateReferenceForDelete(ctx context.Context, r
 
 // Di implementasi GetLecturerProfileID (Postgre Repository)
 
-func (r *postgreAchievementRepo) GetLecturerProfileID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
-    var lecturerProfileID uuid.UUID
+func (r *postgreAchievementRepo) GetHistoryByMongoID(ctx context.Context, mongoID string) ([]models.AchievementReference, error) {
+    var refs []models.AchievementReference
+    query := `SELECT id, student_id, mongo_achievement_id, status, submitted_at, rejection_note, verified_by, verified_at, created_at, updated_at 
+              FROM achievement_references 
+              WHERE mongo_achievement_id = $1`
     
-    query := `SELECT id FROM lecturers WHERE user_id = $1`
-    
-    // 🛑 DEBUG: Cetak ID yang dicari
-    fmt.Println("DEBUG: Mencari Lecturer Profile ID untuk User ID:", userID.String()) 
-    
-    err := r.db.QueryRowContext(ctx, query, userID).Scan(&lecturerProfileID)
-    
+    // 🛑 PERBAIKAN 1: Menangkap dan menangani error hasil query
+    rows, err := r.db.QueryContext(ctx, query, mongoID)
     if err != nil {
-        // ... (Error handling)
-        fmt.Println("DEBUG: GetLecturerProfileID GAGAL!")
-        return uuid.Nil, errors.New("profil dosen tidak ditemukan untuk user ini") 
+        return nil, fmt.Errorf("postgre query GetHistoryByMongoID failed: %w", err)
     }
-    
-    // 🛑 DEBUG: Cetak ID yang ditemukan
-    fmt.Println("DEBUG: Ditemukan Lecturer Profile ID:", lecturerProfileID.String())
-    return lecturerProfileID, nil
+    // 🛑 PERBAIKAN 2: Penting! Selalu tutup rows setelah selesai
+    defer rows.Close() 
+
+    // 🛑 PERBAIKAN 3: Loop untuk melakukan scanning ke struct models.AchievementReference
+    for rows.Next() {
+        var ref models.AchievementReference
+        if err := rows.Scan(
+            &ref.ID,
+            &ref.StudentID,
+            &ref.MongoAchievementID,
+            &ref.Status,
+            &ref.SubmittedAt,
+            &ref.RejectionNote,
+            &ref.VerifiedBy, // Asumsi ini adalah *uuid.UUID atau sql.NullString
+            &ref.VerifiedAt,
+            &ref.CreatedAt,
+            &ref.UpdatedAt,
+        ); err != nil {
+            return nil, fmt.Errorf("postgre scan history failed: %w", err)
+        }
+        refs = append(refs, ref)
+    }
+
+    // 🛑 PERBAIKAN 4: Cek error setelah loop (jika ada error yang tersembunyi selama iterasi)
+    if err := rows.Err(); err != nil {
+        return nil, fmt.Errorf("error during history iteration: %w", err)
+    }
+
+    // ... (Lanjutan scan dan return)
+    return refs, nil
+}
+func (r *postgreAchievementRepo) GetLecturerProfileID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+	var lecturerProfileID uuid.UUID
+	
+	// Query untuk mendapatkan ID dosen dari tabel 'lecturers' berdasarkan 'user_id'
+	query := `SELECT id FROM lecturers WHERE user_id = $1`
+	
+	// Eksekusi query dan coba scan hasilnya ke lecturerProfileID
+	err := r.db.QueryRowContext(ctx, query, userID).Scan(&lecturerProfileID)
+	
+	if err != nil {
+		// 1. Cek jika dosen tidak ditemukan (sql.ErrNoRows)
+		if errors.Is(err, sql.ErrNoRows) {
+			return uuid.Nil, errors.New("profil dosen tidak ditemukan untuk user ini")
+		}
+		// 2. Error database lainnya
+		return uuid.Nil, fmt.Errorf("postgre query GetLecturerProfileID failed: %w", err)
+	}
+	
+	// Jika berhasil, kembalikan ID profil dosen (lecturers.id)
+	return lecturerProfileID, nil
 }

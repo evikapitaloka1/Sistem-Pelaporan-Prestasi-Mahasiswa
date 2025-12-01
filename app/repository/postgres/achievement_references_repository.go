@@ -124,12 +124,17 @@ func (r *mongoAchievementRepo) AddAttachment(ctx context.Context, id primitive.O
 // --- POSTGRESQL Repository ---
 
 // PostgreAchievementRepository mendefinisikan kontrak akses data ke PostgreSQL (references & users/students).
+// uas/app/repository/postgres/achievement_references_repository.go
+
 type PostgreAchievementRepository interface {
     // Menggunakan uuid.UUID untuk semua ID
     GetStudentProfileID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) 
     GetReferenceByMongoID(ctx context.Context, mongoID string) (*models.AchievementReference, error)
     GetReferenceByID(ctx context.Context, refID uuid.UUID) (*models.AchievementReference, error) 
     CreateReference(ctx context.Context, ref *models.AchievementReference) error
+    
+    // ✅ DEKLARASI GetHistoryByMongoID CUKUP SEKALI
+    GetHistoryByMongoID(ctx context.Context, mongoID string) ([]models.AchievementReference, error) 
     
     // ✅ PERBAIKAN 1: Menghapus parameter 'status' yang duplikat
     UpdateReferenceStatus(
@@ -149,8 +154,12 @@ type PostgreAchievementRepository interface {
     
     // ✅ PERBAIKAN 2: Menambahkan parameter status untuk operasi Soft Delete
     UpdateReferenceForDelete(ctx context.Context, refID uuid.UUID, status models.AchievementStatus) error
-
-	GetLecturerProfileID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) 
+    
+    // ✅ DEKLARASI GetLecturerProfileID CUKUP SEKALI
+    GetLecturerProfileID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) 
+    
+    // HAPUS SEMUA DEKLARASI DUPLIKAT DI SINI
+	
 }
 
 
@@ -452,3 +461,37 @@ func (r *postgreAchievementRepo) GetLecturerProfileID(ctx context.Context, userI
     
     return lecturerProfileID, nil
 }
+// Di postgreAchievementRepo struct implementation:
+
+func (r *postgreAchievementRepo) GetHistoryByMongoID(ctx context.Context, mongoID string) ([]models.AchievementReference, error) {
+    var refs []models.AchievementReference
+    
+    // Query ini akan mengambil satu baris referensi (asumsi status terbaru)
+    // Jika Anda memiliki tabel audit log terpisah, query akan diarahkan ke sana.
+    // Karena kita tidak memiliki tabel audit log, kita ambil referensi tunggal:
+    query := `SELECT id, student_id, mongo_achievement_id, status, submitted_at, rejection_note, verified_by, verified_at, created_at, updated_at 
+              FROM achievement_references 
+              WHERE mongo_achievement_id = $1`
+              
+    rows, err := r.db.QueryContext(ctx, query, mongoID)
+    if err != nil {
+        return nil, fmt.Errorf("postgre get history failed: %w", err)
+    }
+    defer rows.Close()
+
+    // Ambil dan scan data ke slice
+    for rows.Next() {
+        var ref models.AchievementReference
+        if err := rows.Scan(
+            &ref.ID, &ref.StudentID, &ref.MongoAchievementID, &ref.Status, &ref.SubmittedAt, 
+            &ref.RejectionNote, &ref.VerifiedBy, &ref.VerifiedAt, &ref.CreatedAt, &ref.UpdatedAt,
+        ); err != nil {
+            return nil, fmt.Errorf("postgre scan history failed: %w", err)
+        }
+        refs = append(refs, ref)
+    }
+    
+    return refs, nil
+}
+// Di implementasi postgreAchievementRepo
+

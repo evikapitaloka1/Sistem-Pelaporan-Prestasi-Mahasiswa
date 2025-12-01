@@ -107,9 +107,45 @@ func AchievementRoutes(
 		return c.JSON(fiber.Map{"status": "success", "data": result})
 	})
 
-	achievements.Get("/:id/history", rbacView, func(c *fiber.Ctx) error {
-		return c.SendString("Achievement History Endpoint")
-	})
+	// Di dalam AchievementRoutes (uas/routes/achievement.go)
+// ----------------------
+// A. ENDPOINT UMUM (READ/HISTORY)
+// ----------------------
+// ... (Kode ListAchievements dan GetAchievementDetail)
+
+achievements.Get("/:id/history", rbacView, func(c *fiber.Ctx) error {
+    // 1. Ambil ID Prestasi (MongoDB ObjectID) dari parameter
+    achievementID := c.Params("id")
+    if len(achievementID) != 24 {
+        return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid achievement ID format (Expected 24-char ObjectID)"})
+    }
+
+    // 2. Ambil User ID dari context (diperlukan untuk otorisasi di service)
+    userID, err := getUserID(c)
+    if err != nil {
+        return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+    }
+    
+    // 3. Ambil Role dari context (diperlukan untuk otorisasi di service)
+    role, err := getRole(c)
+    if err != nil {
+        return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+    }
+
+    // 4. Panggil Service Layer untuk mengambil riwayat status
+    // ASUMSI: GetAchievementHistory sudah ditambahkan ke AchievementService interface Anda
+    result, err := achievementSvc.GetAchievementHistory(c.Context(), achievementID, userID, role)
+    
+    if err != nil {
+        // Asumsi status 404 jika tidak ditemukan, atau 400/500 untuk error lain
+        return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+    }
+
+    // 5. Kembalikan data riwayat dalam format JSON
+    return c.JSON(fiber.Map{"status": "success", "data": result})
+})
+
+// ... (Kode endpoint lainnya)
 
 	// ----------------------
 	// B. MAHASISWA (CREATE, UPDATE, DELETE)
