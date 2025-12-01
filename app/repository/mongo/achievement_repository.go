@@ -33,6 +33,8 @@ type MongoAchievementRepository interface {
 	
 	// Attachment
 	AddAttachment(ctx context.Context, achievementID primitive.ObjectID, attachment *models.Attachment) error
+
+	
 }
 
 type mongoAchievementRepo struct {
@@ -173,6 +175,7 @@ type PostgreAchievementRepository interface {
 	
 	// ✅ SOFT DELETE: Status Update
 	UpdateReferenceForDelete(ctx context.Context, refID uuid.UUID, status models.AchievementStatus) error
+	GetLecturerProfileID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error)
 }
 
 type postgreAchievementRepo struct {
@@ -399,4 +402,28 @@ func (r *postgreAchievementRepo) UpdateReferenceForDelete(ctx context.Context, r
         return errors.New("cannot update reference status: id not found")
     }
     return nil
+}
+// Di dalam struct postgreAchievementRepo
+
+// Di implementasi GetLecturerProfileID (Postgre Repository)
+
+func (r *postgreAchievementRepo) GetLecturerProfileID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+    var lecturerProfileID uuid.UUID
+    
+    query := `SELECT id FROM lecturers WHERE user_id = $1`
+    
+    // 🛑 DEBUG: Cetak ID yang dicari
+    fmt.Println("DEBUG: Mencari Lecturer Profile ID untuk User ID:", userID.String()) 
+    
+    err := r.db.QueryRowContext(ctx, query, userID).Scan(&lecturerProfileID)
+    
+    if err != nil {
+        // ... (Error handling)
+        fmt.Println("DEBUG: GetLecturerProfileID GAGAL!")
+        return uuid.Nil, errors.New("profil dosen tidak ditemukan untuk user ini") 
+    }
+    
+    // 🛑 DEBUG: Cetak ID yang ditemukan
+    fmt.Println("DEBUG: Ditemukan Lecturer Profile ID:", lecturerProfileID.String())
+    return lecturerProfileID, nil
 }

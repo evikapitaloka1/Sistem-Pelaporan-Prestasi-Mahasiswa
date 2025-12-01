@@ -59,24 +59,45 @@ func NewAchievementService(mRepo repository.MongoAchievementRepository, pRepo re
 // Helper Function
 // -----------------------------------------------------------
 
-func (s *AchievementServiceImpl) verifyAccessCheck(ctx context.Context, ref *models.AchievementReference, lecturerID uuid.UUID) error {
-	// ... (Implementasi verifyAccessCheck)
-	adviseeIDs, err := s.PostgreRepo.GetAdviseeIDs(ctx, lecturerID)
-	if err != nil { return errors.New("gagal mendapatkan data mahasiswa bimbingan") }
-	
-	isAdvisee := false
-	for _, id := range adviseeIDs {
-		if id == ref.StudentID {
-			isAdvisee = true
-			break
-		}
-	}
-	if !isAdvisee {
-		return errors.New("dosen ini tidak berhak memproses prestasi mahasiswa tersebut")
-	}
-	return nil
-}
+// Di dalam Service Layer (verifyAccessCheck)
 
+// File: uas/app/service/mongo/achievement_service.go (Helper Function)
+
+// File: uas/app/service/mongo/achievement_service.go (verifyAccessCheck)
+
+// uas/app/service/mongo/achievement_service.go (Helper Function)
+
+func (s *AchievementServiceImpl) verifyAccessCheck(ctx context.Context, ref *models.AchievementReference, userIDFromToken uuid.UUID) error {
+    
+    // 🛑 LANGKAH 1: KONVERSI ID TOKEN (users.id) ke ID PROFIL DOSEN (lecturers.id)
+    lecturerProfileID, err := s.PostgreRepo.GetLecturerProfileID(ctx, userIDFromToken)
+    if err != nil {
+        // Jika user ID ada di token tapi tidak ada profil dosen, tolak.
+        return errors.New("gagal mendapatkan profil dosen yang login") 
+    }
+
+    // 🛑 LANGKAH 2: Gunakan ID Profil Dosen (lecturers.id) untuk mendapatkan adviseeIDs
+    adviseeIDs, err := s.PostgreRepo.GetAdviseeIDs(ctx, lecturerProfileID) // ✅ Menggunakan ID Profil Dosen
+    if err != nil { 
+        return errors.New("gagal mendapatkan data mahasiswa bimbingan") 
+    }
+    
+    // 3. Pengecekan Kepemilikan Mahasiswa
+    isAdvisee := false
+    // ... (Logika perulangan tetap sama)
+    for _, id := range adviseeIDs {
+        if id == ref.StudentID {
+            isAdvisee = true
+            break
+        }
+    }
+    
+    if !isAdvisee {
+        return errors.New("dosen ini tidak berhak memproses prestasi mahasiswa tersebut")
+    }
+    
+    return nil
+}
 // -----------------------------------------------------------
 // Mahasiswa Operations (FR-003, FR-004, FR-005)
 // -----------------------------------------------------------

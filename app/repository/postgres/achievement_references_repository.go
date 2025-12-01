@@ -149,7 +149,10 @@ type PostgreAchievementRepository interface {
     
     // ✅ PERBAIKAN 2: Menambahkan parameter status untuk operasi Soft Delete
     UpdateReferenceForDelete(ctx context.Context, refID uuid.UUID, status models.AchievementStatus) error
+
+	GetLecturerProfileID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) 
 }
+
 
 type postgreAchievementRepo struct {
 	db *sql.DB
@@ -253,25 +256,35 @@ func (r *postgreAchievementRepo) CreateReference(ctx context.Context, ref *model
 
 // UpdateReferenceStatus mengupdate status workflow. (Submit, Verify, Reject)
 // KODE BARU (Memperbaiki Error)
-func (r *postgreAchievementRepo) UpdateReferenceForDelete(ctx context.Context, refID uuid.UUID, status models.AchievementStatus) error {
-    
-    // Query ini akan mengubah status menjadi StatusDeleted (yang dikirim dari service)
-    query := `UPDATE achievement_references 
-              SET status = $1, updated_at = NOW() 
-              WHERE id = $2`
-              
-    // ✅ PERBAIKAN: Melewatkan 'status' sebagai argumen pertama
-    res, err := r.db.ExecContext(ctx, query, status, refID) 
-    
-    if err != nil {
-        return fmt.Errorf("postgre update status for soft delete failed: %w", err)
-    }
+// File: uas/app/repository/postgres/achievement_references_repository.go (Implementasi)
 
-    rowsAffected, _ := res.RowsAffected()
-    if rowsAffected == 0 {
-        return errors.New("cannot update reference status: id not found")
-    }
-    return nil
+func (r *postgreAchievementRepo) UpdateReferenceForDelete(ctx context.Context, refID uuid.UUID, status models.AchievementStatus) error {
+	
+	// Query Sederhana dan Efisien untuk Soft Delete
+	query := `
+	UPDATE achievement_references
+	SET status = $1::achievement_status, -- $1: models.StatusDeleted
+		rejection_note = NULL,          -- Set NULL saat dihapus
+		verified_by = NULL,             -- Set NULL saat dihapus
+		verified_at = NULL,             -- Clear verified_at
+		submitted_at = submitted_at,    -- Pertahankan tanggal submit (opsional)
+		updated_at = NOW()
+	WHERE id = $2
+	` 
+	
+	// EXECUTE: status ($1) dan refID ($2)
+	res, err := r.db.ExecContext(ctx, query, status, refID) 
+	
+	if err != nil {
+		return fmt.Errorf("postgre update status for soft delete failed: %w", err)
+	}
+
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		return errors.New("cannot update reference status: id not found")
+	}
+	
+	return nil
 }
 // GetAdviseeIDs mendapatkan semua ID Mahasiswa yang dibimbing oleh Dosen Wali ini. (FR-006)
 func (r *postgreAchievementRepo) GetAdviseeIDs(ctx context.Context, lecturerID uuid.UUID) ([]uuid.UUID, error) {
@@ -383,4 +396,22 @@ func (r *postgreAchievementRepo) UpdateReferenceStatus(ctx context.Context, refI
 		return fmt.Errorf("postgre update status failed: %w", err)
 	}
 	return nil
+}
+// Di dalam struct postgreAchievementRepo
+
+func (r *postgreAchievementRepo) GetLecturerProfileID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+    var lecturerProfileID uuid.UUID
+    
+    query := `SELECT id FROM lecturers WHERE user_id = $1`
+    
+    err := r.db.QueryRowContext(ctx, query, userID).Scan(&lecturerProfileID)
+    
+    if err != nil {
+        if errors.Is(err, sql.ErrNoRows) {
+            return uuid.Nil, errors.New("profil dosen tidak ditemukan untuk user ini")
+        }
+        return uuid.Nil, fmt.Errorf("postgre query GetLecturerProfileID failed: %w", err)
+    }
+    
+    return lecturerProfileID, nil
 }
