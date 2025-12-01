@@ -126,22 +126,29 @@ func (r *mongoAchievementRepo) AddAttachment(ctx context.Context, id primitive.O
 // PostgreAchievementRepository mendefinisikan kontrak akses data ke PostgreSQL (references & users/students).
 type PostgreAchievementRepository interface {
     // Menggunakan uuid.UUID untuk semua ID
-	GetStudentProfileID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) 
-	GetReferenceByMongoID(ctx context.Context, mongoID string) (*models.AchievementReference, error)
-	GetReferenceByID(ctx context.Context, refID uuid.UUID) (*models.AchievementReference, error) 
-	CreateReference(ctx context.Context, ref *models.AchievementReference) error
-    // Menggunakan sql.NullString untuk verifiedBy karena itu yang diterima ExecContext untuk UUID nullable (tanpa sqlx)
-	UpdateReferenceStatus(ctx context.Context, refID uuid.UUID, status models.AchievementStatus, note sql.NullString, verifiedBy sql.NullString) error 
+    GetStudentProfileID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) 
+    GetReferenceByMongoID(ctx context.Context, mongoID string) (*models.AchievementReference, error)
+    GetReferenceByID(ctx context.Context, refID uuid.UUID) (*models.AchievementReference, error) 
+    CreateReference(ctx context.Context, ref *models.AchievementReference) error
+    
+    // ✅ PERBAIKAN 1: Menghapus parameter 'status' yang duplikat
+    UpdateReferenceStatus(
+        ctx context.Context, 
+        refID uuid.UUID, 
+        status models.AchievementStatus, // Status yang benar
+        note sql.NullString, 
+        verifiedBy sql.NullString,
+    ) error 
 
-	// List 
-	GetReferencesByStudentIDs(ctx context.Context, studentIDs []uuid.UUID) ([]models.AchievementReference, error) 
-	GetAllReferences(ctx context.Context) ([]models.AchievementReference, error)
-	
-	// Tambahan untuk Dosen Wali (FR-006)
-	GetAdviseeIDs(ctx context.Context, lecturerID uuid.UUID) ([]uuid.UUID, error) 
-	
-    // Untuk Soft Delete/Hard Delete (FR-005)
-    UpdateReferenceForDelete(ctx context.Context, refID uuid.UUID) error
+    // List 
+    GetReferencesByStudentIDs(ctx context.Context, studentIDs []uuid.UUID) ([]models.AchievementReference, error) 
+    GetAllReferences(ctx context.Context) ([]models.AchievementReference, error)
+    
+    // Tambahan untuk Dosen Wali (FR-006)
+    GetAdviseeIDs(ctx context.Context, lecturerID uuid.UUID) ([]uuid.UUID, error) 
+    
+    // ✅ PERBAIKAN 2: Menambahkan parameter status untuk operasi Soft Delete
+    UpdateReferenceForDelete(ctx context.Context, refID uuid.UUID, status models.AchievementStatus) error
 }
 
 type postgreAchievementRepo struct {
@@ -245,23 +252,27 @@ func (r *postgreAchievementRepo) CreateReference(ctx context.Context, ref *model
 }
 
 // UpdateReferenceStatus mengupdate status workflow. (Submit, Verify, Reject)
-func (r *postgreAchievementRepo) UpdateReferenceStatus(ctx context.Context, refID uuid.UUID, status models.AchievementStatus, note sql.NullString, verifiedBy sql.NullString) error {
-	query := `
-		UPDATE achievement_references
-		SET status = $1, rejection_note = $2, verified_by = $3, updated_at = NOW(),
-		 	submitted_at = CASE WHEN $1 = 'submitted' THEN NOW() ELSE submitted_at END,
-		 	verified_at = CASE WHEN $1 = 'verified' THEN NOW() ELSE verified_at END
-		WHERE id = $4
-	`
-	// Note: verifiedBy (sql.NullString) digunakan sebagai argumen karena ExecContext 
-    // dapat menerima sql.NullString (yang berisi string UUID atau NULL) untuk kolom UUID.
-	_, err := r.db.ExecContext(ctx, query, status, note, verifiedBy, refID)
-	if err != nil {
-		return fmt.Errorf("postgre update status failed: %w", err)
-	}
-	return nil
-}
+// KODE BARU (Memperbaiki Error)
+func (r *postgreAchievementRepo) UpdateReferenceForDelete(ctx context.Context, refID uuid.UUID, status models.AchievementStatus) error {
+    
+    // Query ini akan mengubah status menjadi StatusDeleted (yang dikirim dari service)
+    query := `UPDATE achievement_references 
+              SET status = $1, updated_at = NOW() 
+              WHERE id = $2`
+              
+    // ✅ PERBAIKAN: Melewatkan 'status' sebagai argumen pertama
+    res, err := r.db.ExecContext(ctx, query, status, refID) 
+    
+    if err != nil {
+        return fmt.Errorf("postgre update status for soft delete failed: %w", err)
+    }
 
+    rowsAffected, _ := res.RowsAffected()
+    if rowsAffected == 0 {
+        return errors.New("cannot update reference status: id not found")
+    }
+    return nil
+}
 // GetAdviseeIDs mendapatkan semua ID Mahasiswa yang dibimbing oleh Dosen Wali ini. (FR-006)
 func (r *postgreAchievementRepo) GetAdviseeIDs(ctx context.Context, lecturerID uuid.UUID) ([]uuid.UUID, error) {
 	var studentIDs []uuid.UUID
@@ -360,18 +371,25 @@ func (r *postgreAchievementRepo) GetAllReferences(ctx context.Context) ([]models
 }
 
 // UpdateReferenceForDelete digunakan saat Mahasiswa menghapus prestasi draft (FR-005)
-func (r *postgreAchievementRepo) UpdateReferenceForDelete(ctx context.Context, refID uuid.UUID) error {
-    // Hard Delete Reference: Mahasiswa hanya boleh menghapus status 'draft'.
-    query := `DELETE FROM achievement_references WHERE id = $1 AND status = 'draft'`
-    
-    res, err := r.db.ExecContext(ctx, query, refID)
-    if err != nil {
-        return fmt.Errorf("postgre delete reference failed: %w", err)
-    }
-
-    rowsAffected, _ := res.RowsAffected()
-    if rowsAffected == 0 {
-        return errors.New("cannot delete reference: id not found or status is not 'draft'")
-    }
-    return nil
+// Add this function to your postgreAchievementRepo struct implementation block
+func (r *postgreAchievementRepo) UpdateReferenceStatus(
+	ctx context.Context, 
+	refID uuid.UUID, 
+	status models.AchievementStatus, 
+	note sql.NullString, 
+	verifiedBy sql.NullString,
+) error {
+	query := `
+		UPDATE achievement_references
+		SET status = $1, rejection_note = $2, verified_by = $3, updated_at = NOW(),
+			submitted_at = CASE WHEN $1 = 'submitted' THEN NOW() ELSE submitted_at END,
+			verified_at = CASE WHEN $1 = 'verified' THEN NOW() ELSE verified_at END
+		WHERE id = $4
+	`
+	// Note: verifiedBy (sql.NullString) here must hold a valid UUID string or NULL.
+	_, err := r.db.ExecContext(ctx, query, status, note, verifiedBy, refID)
+	if err != nil {
+		return fmt.Errorf("postgre update status failed: %w", err)
+	}
+	return nil
 }

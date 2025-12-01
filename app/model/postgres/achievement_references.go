@@ -88,9 +88,10 @@ type AchievementStatus string
 
 const (
     StatusDraft AchievementStatus = "draft"
-    StatusSubmitted AchievementStatus = "submitted"
-    StatusVerified AchievementStatus = "verified"
-    StatusRejected AchievementStatus = "rejected"
+	StatusSubmitted AchievementStatus = "submitted"
+	StatusVerified AchievementStatus = "verified"
+	StatusRejected AchievementStatus = "rejected"
+	StatusDeleted AchievementStatus = "deleted"
 )
 
 // AchievementReference merepresentasikan tabel achievement_references di PostgreSQL.

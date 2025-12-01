@@ -137,6 +137,7 @@ const (
 	StatusSubmitted AchievementStatus = "submitted"
 	StatusVerified AchievementStatus = "verified"
 	StatusRejected AchievementStatus = "rejected"
+	StatusDeleted AchievementStatus = "deleted"
 )
 
 // AchievementReference merepresentasikan tabel achievement_references di PostgreSQL.

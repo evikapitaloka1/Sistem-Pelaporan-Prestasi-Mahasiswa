@@ -170,26 +170,43 @@ achievements.Put("/:id", rbacUpdate, func(c *fiber.Ctx) error {
     // 5. Sukses
     return c.JSON(fiber.Map{"status": "success", "message": "Achievement updated successfully"})
 })
-	achievements.Delete("/:id", rbacDelete, func(c *fiber.Ctx) error {
-		// ✅ PERBAIKAN: Ambil ID sebagai string (MongoDB ObjectID)
-		achievementID := c.Params("id")
-		if len(achievementID) != 24 {
-			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid achievement ID format (Expected 24-char ObjectID)"})
-		}
+// Perbaikan pada handler achievements.Delete("/:id", rbacDelete, ...)
 
-		userID, err := getUserID(c)
-		if err != nil {
-			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
-		}
+achievements.Delete("/:id", rbacDelete, func(c *fiber.Ctx) error {
+    // 1. Ambil ID MongoDB
+    achievementID := c.Params("id")
+    if len(achievementID) != 24 {
+        return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid achievement ID format (Expected 24-char ObjectID)"})
+    }
 
-		// ✅ PERBAIKAN: Ganti pemanggilan service dari uuid.UUID ke string
-		err = achievementSvc.DeleteAchievement(c.Context(), achievementID, userID)
-		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
-		}
-		return c.JSON(fiber.Map{"status": "success", "message": "Achievement deleted"})
-	})
+    // 2. Ambil User ID
+    userID, err := getUserID(c)
+    if err != nil {
+        return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+    }
+    
+    // 3. Ambil User Role
+    // 🛑 PERBAIKAN ERROR 1: Gunakan operator assignment pendek 'a, err := b()' hanya jika 'err' adalah variabel baru.
+    // Jika 'err' sudah ada di scope, gunakan '=' untuk assignment.
+    userRole, errRole := getRole(c) // <-- Gunakan variabel baru (errRole) untuk menghindari duplikasi Baris 175
+    if errRole != nil {
+        // Jika getRole gagal (misal: role hilang), kembalikan error
+        return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": errRole.Error()})
+    }
 
+    // 4. Panggil Service Layer (Soft Delete)
+    // Gunakan 'err' dari scope luar
+    err = achievementSvc.DeleteAchievement(c.Context(), achievementID, userID, userRole) 
+    
+    if err != nil {
+        // Tangani error jika service gagal
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+    }
+
+    // 5. Sukses (WAJIB ADA)
+    // 🛑 PERBAIKAN ERROR 2: Pastikan ada return statement di akhir fungsi (Baris 183)
+    return c.JSON(fiber.Map{"status": "success", "message": "Achievement deleted (soft delete)"})
+}) // Fungsi berakhir di sini
 	// ----------------------
 	// C. DOSEN WALI (VERIFY, REJECT)
 	// ----------------------

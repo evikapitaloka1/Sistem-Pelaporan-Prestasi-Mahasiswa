@@ -20,22 +20,18 @@ import (
 // =========================================================
 
 type AchievementService interface {
-	// ✅ PERBAIKAN UTAMA: Mengganti return type dari interface{} menjadi *models.AchievementDetail
 	CreateAchievement(ctx context.Context, userID uuid.UUID, req models.AchievementRequest) (*models.AchievementDetail, error) 
 	
-	// ✅ ID MongoDB: Menggunakan string
 	GetAchievementDetail(ctx context.Context, id string, userID uuid.UUID, role string) (*models.AchievementDetail, error)
-	
-	// List mengembalikan slice dari detail
 	ListAchievements(ctx context.Context, role string, userID uuid.UUID) ([]models.AchievementDetail, error) 
 	
-	// ✅ ID MongoDB: Menggunakan string
-	DeleteAchievement(ctx context.Context, id string, userID uuid.UUID) error
+	// ID MongoDB: Menggunakan string
+	DeleteAchievement(ctx context.Context, id string, userID uuid.UUID, userRole string) error
 	
-	// ✅ ID MongoDB: Menggunakan string
+	// ID MongoDB: Menggunakan string untuk Submit
+	SubmitForVerification(ctx context.Context, id string, userID uuid.UUID) error 
+	
 	VerifyAchievement(ctx context.Context, id string, lecturerID uuid.UUID) error
-	
-	// ✅ ID MongoDB: Menggunakan string
 	RejectAchievement(ctx context.Context, id string, lecturerID uuid.UUID, note string) error
 	
 	GetAchievementStatistics(ctx context.Context, role string, userID uuid.UUID) (interface{}, error)
@@ -55,7 +51,6 @@ type AchievementServiceImpl struct {
 
 // NewAchievementService adalah constructor untuk AchievementServiceImpl
 func NewAchievementService(mRepo repository.MongoAchievementRepository, pRepo repository.PostgreAchievementRepository) AchievementService {
-	// Kompiler sekarang akan senang karena Interface dan Implementasi match!
 	return &AchievementServiceImpl{
 		MongoRepo: mRepo,
 		PostgreRepo: pRepo,
@@ -66,7 +61,7 @@ func NewAchievementService(mRepo repository.MongoAchievementRepository, pRepo re
 // Mahasiswa Operations (FR-003, FR-004, FR-005)
 // -----------------------------------------------------------
 
-// CreateAchievement: Signature sudah Match Interface
+// CreateAchievement: (Implementasi sudah benar)
 func (s *AchievementServiceImpl) CreateAchievement(ctx context.Context, userID uuid.UUID, req models.AchievementRequest) (*models.AchievementDetail, error) {
 	// 1. Dapatkan Student ID dari User ID
 	studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
@@ -76,7 +71,6 @@ func (s *AchievementServiceImpl) CreateAchievement(ctx context.Context, userID u
 
 	// Parsing EventDate
 	const dateFormat = "2006-01-02" 
-	
 	eventTime, err := time.Parse(dateFormat, req.Details.EventDate)
 	if err != nil {
 		return nil, fmt.Errorf("format eventDate tidak valid. Harap gunakan %s", dateFormat)
@@ -141,23 +135,28 @@ func (s *AchievementServiceImpl) CreateAchievement(ctx context.Context, userID u
 }
 
 // SubmitForVerification: Mengubah status 'draft' menjadi 'submitted' (FR-004)
-func (s *AchievementServiceImpl) SubmitForVerification(ctx context.Context, refID uuid.UUID, userID uuid.UUID) error {
-	ref, err := s.PostgreRepo.GetReferenceByID(ctx, refID)
+func (s *AchievementServiceImpl) SubmitForVerification(ctx context.Context, mongoAchievementID string, userID uuid.UUID) error {
+	// 1. Ambil Reference (PostgreSQL) berdasarkan MongoDB ID
+	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
 	if err != nil {
 		return err
 	}
-	
+
+	// Precondition 1: Status harus 'draft'
 	if ref.Status != models.StatusDraft {
 		return errors.New("prestasi hanya bisa disubmit jika berstatus 'draft'")
 	}
 	
+	// Precondition 2: Pastikan yang submit adalah pemilik prestasi
 	studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
 	if err != nil { return errors.New("user tidak memiliki profil mahasiswa") }
 	if studentID != ref.StudentID {
 		return errors.New("tidak memiliki hak untuk submit prestasi ini")
 	}
 
-	err = s.PostgreRepo.UpdateReferenceStatus(ctx, refID, models.StatusSubmitted, sql.NullString{}, sql.NullString{})
+	// Update status di PostgreSQL
+	// Kita menggunakan ref.ID (UUID Postgre) untuk update
+	err = s.PostgreRepo.UpdateReferenceStatus(ctx, ref.ID, models.StatusSubmitted, sql.NullString{}, sql.NullString{})
 	if err != nil {
 		return fmt.Errorf("gagal update status menjadi submitted: %w", err)
 	}
@@ -167,43 +166,125 @@ func (s *AchievementServiceImpl) SubmitForVerification(ctx context.Context, refI
 	return nil
 }
 
-// DeleteAchievement: Soft delete di MongoDB dan Hard delete reference di PostgreSQL (FR-005)
-// ✅ Signature ID sudah string
-func (s *AchievementServiceImpl) DeleteAchievement(ctx context.Context, mongoAchievementID string, userID uuid.UUID) error {
-	// 1. Ambil Reference (PostgreSQL) berdasarkan MongoDB ID
-	mongoID, err := primitive.ObjectIDFromHex(mongoAchievementID)
-	if err != nil {
-		return errors.New("ID MongoDB tidak valid")
-	}
+// ✅ IMPLEMENTASI SOFT DELETE (DeleteAchievement)
+// File: uas/app/service/mongo/achievement_service.go (Implementasi)
+
+// File: uas/app/service/mongo/achievement_service.go (DeleteAchievement)
+// File: uas/app/service/mongo/achievement_service.go (DeleteAchievement)
+
+func (s *AchievementServiceImpl) DeleteAchievement(
+	ctx context.Context, 
+	mongoAchievementID string, 
+	userID uuid.UUID, 
+	userRole string, // 🛑 Tambahkan kembali parameter userRole
+) error {
 	
+	// 1. Dapatkan Reference
 	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
-	if err != nil {
-		return err
-	}
+	if err != nil { return err }
 
-	// Precondition 1: Hanya boleh dihapus jika status 'draft' (FR-005)
-	if ref.Status != models.StatusDraft {
-		return errors.New("prestasi hanya bisa dihapus jika berstatus 'draft'")
-	}
+	// 2. LOGIKA VALIDASI DAN BYPASS SUPERADMIN
 	
-	// Precondition 2: Pastikan yang menghapus adalah pemilik prestasi
-	studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
-	if err != nil { return errors.New("user tidak memiliki profil mahasiswa") }
-	if studentID != ref.StudentID {
-		return errors.New("tidak memiliki hak untuk menghapus prestasi ini")
-	}
+	// Jika BUKAN Admin, jalankan semua validasi ketat
+	if userRole != "Admin" {
+		// --- VALIDASI MAHASISWA PEMILIK ---
+		
+		// Precondition 1: Status harus 'draft'
+		if ref.Status != models.StatusDraft {
+			return errors.New("prestasi hanya bisa dihapus jika berstatus 'draft'")
+		}
+		
+		// Precondition 2: Cek Kepemilikan
+		studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID) 
+		if err != nil { 
+			// User yang delete harus memiliki profil mahasiswa
+			return errors.New("user tidak memiliki profil mahasiswa") 
+		}
+		
+		// User ID harus sesuai dengan pemilik Achievement
+		if studentID != ref.StudentID {
+			return errors.New("tidak memiliki hak untuk menghapus prestasi ini")
+		}
+	} 
+	// Jika userRole == "Admin", logic akan melewati (bypass) blok if di atas.
 
-	// 2. Soft Delete di MongoDB
+	// 3. LAKUKAN SOFT DELETE
+	mongoID, err := primitive.ObjectIDFromHex(mongoAchievementID)
+	if err != nil { return errors.New("ID MongoDB tidak valid") }
+	
 	if err := s.MongoRepo.SoftDeleteByID(ctx, mongoID); err != nil {
 		return fmt.Errorf("gagal soft delete di MongoDB: %w", err)
 	}
 
-	// 3. Hard Delete Reference di PostgreSQL 
-	if err := s.PostgreRepo.UpdateReferenceForDelete(ctx, ref.ID); err != nil {
-		return fmt.Errorf("gagal menghapus referensi di PostgreSQL: %w", err)
+	// Update Status di PostgreSQL menjadi 'deleted'
+	if err := s.PostgreRepo.UpdateReferenceForDelete(ctx, ref.ID, models.StatusDeleted); err != nil {
+		return fmt.Errorf("gagal update status referensi di PostgreSQL menjadi 'deleted': %w", err)
 	}
 
 	return nil
+}
+// Catatan: Logika bypass yang sama telah diterapkan di UpdateAchievement.
+// ✅ IMPLEMENTASI UPDATE ACHIEVEMENT
+func (s *AchievementServiceImpl) UpdateAchievement(
+    ctx context.Context, 
+    mongoAchievementID string, 
+    userID uuid.UUID, 
+    userRole string, 
+    req models.AchievementRequest,
+) error {
+    
+    // 1. Dapatkan Reference (Postgre) untuk cek status dan pemilik
+    ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
+    if err != nil {
+        return errors.New("prestasi tidak ditemukan atau ID tidak valid") 
+    }
+    
+    // 2. LOGIKA VALIDASI
+    canUpdate := false 
+    
+    if userRole == "Admin" {
+        canUpdate = true // Admin selalu diizinkan
+    } else {
+        if ref.Status != models.StatusDraft {
+            return errors.New("prestasi hanya bisa diupdate jika berstatus 'draft'")
+        }
+        
+        studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
+        if err != nil {
+            return errors.New("user is not associated with a student profile") 
+        }
+        if studentID == ref.StudentID {
+            canUpdate = true 
+        }
+    }
+    
+    if !canUpdate {
+        return errors.New("forbidden: tidak memiliki hak untuk mengupdate prestasi ini")
+    }
+
+    // 3. UPDATE DATABASE
+    mongoID, err := primitive.ObjectIDFromHex(mongoAchievementID)
+    if err != nil {
+        return errors.New("ID MongoDB tidak valid")
+    }
+    
+    // Siapkan Data Update
+    updateData := primitive.M{
+        "title": req.Title,
+        "description": req.Description,
+        "achievementType": req.AchievementType,
+        "tags": req.Tags,
+        "points": req.Points,
+        "details": req.Details,
+        "updated_at": time.Now(),
+    }
+    
+    // Panggil Mongo Repository
+    if err := s.MongoRepo.UpdateByID(ctx, mongoID, updateData); err != nil {
+        return fmt.Errorf("gagal update di MongoDB: %w", err)
+    }
+
+    return nil
 }
 
 // -----------------------------------------------------------
@@ -229,7 +310,6 @@ func (s *AchievementServiceImpl) verifyAccessCheck(ctx context.Context, ref *mod
 }
 
 // VerifyAchievement: Mengubah status 'submitted' menjadi 'verified' (FR-007)
-// ✅ Signature ID sudah string
 func (s *AchievementServiceImpl) VerifyAchievement(ctx context.Context, mongoAchievementID string, lecturerID uuid.UUID) error {
 	// 1. Ambil Reference (PostgreSQL)
 	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
@@ -256,7 +336,6 @@ func (s *AchievementServiceImpl) VerifyAchievement(ctx context.Context, mongoAch
 }
 
 // RejectAchievement: Mengubah status 'submitted' menjadi 'rejected' (FR-008)
-// ✅ Signature ID sudah string
 func (s *AchievementServiceImpl) RejectAchievement(ctx context.Context, mongoAchievementID string, lecturerID uuid.UUID, rejectionNote string) error {
 	// 1. Ambil Reference (PostgreSQL)
 	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
@@ -298,7 +377,6 @@ func (s *AchievementServiceImpl) RejectAchievement(ctx context.Context, mongoAch
 // -----------------------------------------------------------
 
 // GetAchievementDetail: Mengambil detail lengkap dari kedua DB
-// ✅ Signature ID sudah string dan Return Type sudah Match Interface
 func (s *AchievementServiceImpl) GetAchievementDetail(ctx context.Context, mongoAchievementID string, userID uuid.UUID, userRole string) (*models.AchievementDetail, error) {
 	// 1. Ambil Reference (PostgreSQL)
 	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
@@ -330,6 +408,7 @@ func (s *AchievementServiceImpl) GetAchievementDetail(ctx context.Context, mongo
 		return nil, errors.New("ID MongoDB tidak valid")
 	}
 	
+	// Pastikan GetByID di repo Anda memfilter field deletedAt != nil
 	mongoDoc, err := s.MongoRepo.GetByID(ctx, mongoID)
 	if err != nil {
 		return nil, fmt.Errorf("gagal fetch detail dari MongoDB: %w", err)
@@ -450,84 +529,4 @@ func (s *AchievementServiceImpl) GetAchievementStatistics(ctx context.Context, r
 	return map[string]string{
 		"message": "Endpoint statistik masih dalam pengembangan (FR-011). Perlu implementasi agregasi di layer Repository/Database.",
 	}, nil
-}
-
-// Di dalam AchievementServiceImpl struct:
-// ...
-
-// SubmitForVerification: Mengubah status 'draft' menjadi 'submitted' (FR-004)
-// ... (fungsi SubmitForVerification yang sudah ada)
-
-// UpdateAchievement: Mengubah detail prestasi di MongoDB (FR-005 - Implisit)
-// File: uas/app/service/mongo/achievement_service.go (UpdateAchievement)
-
-func (s *AchievementServiceImpl) UpdateAchievement(
-    ctx context.Context, 
-    mongoAchievementID string, 
-    userID uuid.UUID, 
-    userRole string, 
-    req models.AchievementRequest,
-) error {
-    
-    // 1. Dapatkan Reference (Postgre) untuk cek status dan pemilik
-    ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
-    if err != nil {
-        return errors.New("prestasi tidak ditemukan atau ID tidak valid") 
-    }
-    
-    // 2. LOGIKA VALIDASI
-    
-    // Asumsi hak akses update diberikan default ke Admin. 
-    canUpdate := false 
-    
-    if userRole == "Admin" {
-        canUpdate = true // Admin selalu diizinkan
-    } else {
-        // --- Validasi untuk Mahasiswa dan Dosen Wali ---
-
-        // Precondition 1: Hanya boleh diedit jika status 'draft'
-        if ref.Status != models.StatusDraft {
-            return errors.New("prestasi hanya bisa diupdate jika berstatus 'draft'")
-        }
-        
-        // Precondition 2: Cek Kepemilikan (Hanya Mahasiswa pemilik yang boleh)
-        studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
-        if err != nil {
-            return errors.New("user is not associated with a student profile") 
-        }
-        if studentID == ref.StudentID {
-            canUpdate = true // Mahasiswa pemilik diizinkan
-        }
-    }
-    
-    // Jika tidak ada izin setelah semua pemeriksaan
-    if !canUpdate {
-        return errors.New("forbidden: tidak memiliki hak untuk mengupdate prestasi ini")
-    }
-
-    // 3. UPDATE DATABASE (Kode inti update sekarang dijalankan di luar goto)
-    
-    // Konversi string ID ke ObjectID
-    mongoID, err := primitive.ObjectIDFromHex(mongoAchievementID) // Variabel yang mungkin dilompati
-    if err != nil {
-        return errors.New("ID MongoDB tidak valid")
-    }
-    
-    // 4. Siapkan Data Update
-    updateData := primitive.M{
-        "title": req.Title,
-        "description": req.Description,
-        "achievementType": req.AchievementType,
-        "tags": req.Tags,
-        "points": req.Points,
-        "details": req.Details,
-        "updated_at": time.Now(),
-    }
-    
-    // 5. Panggil Mongo Repository
-    if err := s.MongoRepo.UpdateByID(ctx, mongoID, updateData); err != nil {
-        return fmt.Errorf("gagal update di MongoDB: %w", err)
-    }
-
-    return nil
 }
