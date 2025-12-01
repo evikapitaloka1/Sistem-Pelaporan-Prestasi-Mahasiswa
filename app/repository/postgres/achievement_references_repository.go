@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
+	"github.com/lib/pq"
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -305,8 +305,10 @@ func (r *postgreAchievementRepo) GetReferencesByStudentIDs(ctx context.Context, 
 			  FROM achievement_references 
 			  WHERE student_id = ANY($1)`
 	
-	rows, err := r.db.QueryContext(ctx, query, studentIDs)
+	// 🛑 KOREKSI 1: Mengatasi Error UUID Slice dengan pq.Array()
+	rows, err := r.db.QueryContext(ctx, query, pq.Array(studentIDs))
 	if err != nil {
+		// Error di sini sekarang pasti disebabkan oleh database atau masalah koneksi
 		return nil, fmt.Errorf("postgre get references by IDs failed: %w", err)
 	}
 	defer rows.Close()
@@ -314,18 +316,10 @@ func (r *postgreAchievementRepo) GetReferencesByStudentIDs(ctx context.Context, 
 	var refs []models.AchievementReference
 	for rows.Next() {
 		var ref models.AchievementReference
-        // PENTING: Menggunakan &ref.VerifiedBy (*uuid.UUID)
 		if err := rows.Scan(
-			&ref.ID,
-			&ref.StudentID,
-			&ref.MongoAchievementID,
-			&ref.Status,
-			&ref.SubmittedAt,
-			&ref.RejectionNote,
-			&ref.VerifiedBy, // <-- FIX: Scanning ke *uuid.UUID
-			&ref.VerifiedAt,
-			&ref.CreatedAt,
-			&ref.UpdatedAt,
+			&ref.ID, &ref.StudentID, &ref.MongoAchievementID, &ref.Status, &ref.SubmittedAt, &ref.RejectionNote, 
+            &ref.VerifiedBy, // FIX: Sudah menggunakan *uuid.UUID di Model
+            &ref.VerifiedAt, &ref.CreatedAt, &ref.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("postgre scan reference failed: %w", err)
 		}
@@ -372,21 +366,18 @@ func (r *postgreAchievementRepo) GetAllReferences(ctx context.Context) ([]models
 
 // UpdateReferenceForDelete digunakan saat Mahasiswa menghapus prestasi draft (FR-005)
 // Add this function to your postgreAchievementRepo struct implementation block
-func (r *postgreAchievementRepo) UpdateReferenceStatus(
-	ctx context.Context, 
-	refID uuid.UUID, 
-	status models.AchievementStatus, 
-	note sql.NullString, 
-	verifiedBy sql.NullString,
-) error {
+func (r *postgreAchievementRepo) UpdateReferenceStatus(ctx context.Context, refID uuid.UUID, status models.AchievementStatus, note sql.NullString, verifiedBy sql.NullString) error {
 	query := `
-		UPDATE achievement_references
-		SET status = $1, rejection_note = $2, verified_by = $3, updated_at = NOW(),
-			submitted_at = CASE WHEN $1 = 'submitted' THEN NOW() ELSE submitted_at END,
-			verified_at = CASE WHEN $1 = 'verified' THEN NOW() ELSE verified_at END
-		WHERE id = $4
-	`
-	// Note: verifiedBy (sql.NullString) here must hold a valid UUID string or NULL.
+    UPDATE achievement_references
+    SET status = $1::achievement_status, -- 🎯 CAST di sini
+        rejection_note = $2, 
+        verified_by = $3, 
+        updated_at = NOW(),
+        -- 🎯 CAST di sini juga (karena di sini dibandingkan dengan literal string)
+        submitted_at = CASE WHEN $1::text = 'submitted' THEN NOW() ELSE submitted_at END, 
+        verified_at = CASE WHEN $1::text = 'verified' THEN NOW() ELSE verified_at END
+    WHERE id = $4
+`
 	_, err := r.db.ExecContext(ctx, query, status, note, verifiedBy, refID)
 	if err != nil {
 		return fmt.Errorf("postgre update status failed: %w", err)

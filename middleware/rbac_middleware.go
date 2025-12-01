@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"fmt"
+	"strings" // Import strings untuk normalisasi role (walaupun di JWTMiddleware sudah dilakukan)
 	service "uas/app/service/postgres" 
 
 	"github.com/gofiber/fiber/v2"
@@ -16,16 +17,21 @@ func RBACMiddleware(permission string, authService service.IAuthService) fiber.H
 		roleVal := c.Locals("role")
 		role, ok := roleVal.(string)
 
-		if !ok || role == "" {
+		// 🛑 PENTING: Role sudah disetel sebagai lowercase oleh JWTMiddleware
+		// Kita lakukan normalisasi ulang di sini sebagai double-check yang aman.
+		normalizedRole := strings.ToLower(role)
+
+		if !ok || normalizedRole == "" {
 			// Pengamanan jika role tidak disetel/hilang/tipe salah
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"code":  401,
+				"code": 	401,
 				"error": "Role is missing from context. Please login again.",
 			})
 		}
 
-		// 2. ✅ LOGIKA BYPASS ADMIN (Implementasi 'Full Access')
-		if role == "Admin" { 
+		// 2. ✅ LOGIKA BYPASS ADMIN (KOREKSI)
+		// Sekarang cek role menggunakan huruf kecil
+		if normalizedRole == "admin" { // <-- KOREKSI UTAMA: Cek "admin" (huruf kecil)
 			return c.Next() // Admin selalu diizinkan, lewati pengecekan database
 		}
 		
@@ -34,7 +40,7 @@ func RBACMiddleware(permission string, authService service.IAuthService) fiber.H
 		
 		if userIDVal == nil {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"code":  401,
+				"code": 	401,
 				"error": "User belum terautentikasi (Missing JWT claims)",
 			})
 		}
@@ -43,7 +49,7 @@ func RBACMiddleware(permission string, authService service.IAuthService) fiber.H
 		userID, ok := userIDVal.(uuid.UUID)
 		if !ok {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"code":  500,
+				"code": 	500,
 				"error": "Internal Server Error: User ID type assertion failed",
 			})
 		}
@@ -53,7 +59,7 @@ func RBACMiddleware(permission string, authService service.IAuthService) fiber.H
 		
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"code":  500,
+				"code": 	500,
 				"error": fmt.Sprintf("Gagal cek permission: %v", err),
 			})
 		}
@@ -61,7 +67,7 @@ func RBACMiddleware(permission string, authService service.IAuthService) fiber.H
 		if !hasPerm {
 			// Mengembalikan error 403 Forbidden
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-				"code":  403,
+				"code": 	403,
 				"error": fmt.Sprintf("Akses ditolak: Tidak memiliki izin '%s'", permission),
 			})
 		}

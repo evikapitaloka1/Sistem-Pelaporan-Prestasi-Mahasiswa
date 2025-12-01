@@ -114,23 +114,35 @@ func AchievementRoutes(
 	// ----------------------
 	// B. MAHASISWA (CREATE, UPDATE, DELETE)
 	// ----------------------
-	achievements.Post("/", rbacCreate, func(c *fiber.Ctx) error {
-		var req models.AchievementRequest
-		if err := c.BodyParser(&req); err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body", "details": err.Error()})
-		}
-		
-		userID, err := getUserID(c)
-		if err != nil {
-			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
-		}
-		
-		result, err := achievementSvc.CreateAchievement(c.Context(), userID, req)
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
-		}
-		return c.Status(http.StatusCreated).JSON(fiber.Map{"status": "success", "data": result})
-	})
+achievements.Post("/", rbacCreate, func(c *fiber.Ctx) error {
+    var req models.AchievementRequest
+    if err := c.BodyParser(&req); err != nil {
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body", "details": err.Error()})
+    }
+    
+    // 1. Ambil User ID
+    userID, err := getUserID(c)
+    if err != nil {
+        return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+    }
+    
+    // 2. 🛑 TAMBAH: Ambil User Role dari context
+    userRole, errRole := getRole(c)
+    if errRole != nil {
+        // Jika role hilang atau tidak valid, tolak akses
+        return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": errRole.Error()})
+    }
+    
+    // 3. KOREKSI PANGGILAN SERVICE: Tambahkan userRole
+    result, err := achievementSvc.CreateAchievement(c.Context(), userID, userRole, req)
+    
+    if err != nil {
+        // Gunakan 400 Bad Request jika error berasal dari logic bisnis/validasi
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+    }
+    
+    return c.Status(http.StatusCreated).JSON(fiber.Map{"status": "success", "data": result})
+})
 
 	// File: uas/route/mongo/achievement.go
 
@@ -257,4 +269,25 @@ achievements.Delete("/:id", rbacDelete, func(c *fiber.Ctx) error {
 		}
 		return c.JSON(fiber.Map{"status": "success", "message": "Achievement rejected"})
 	})
+	// Di routes/achievement.go, di bawah bagian B. MAHASISWA
+
+// Route baru untuk Submit for verification (Mahasiswa)
+achievements.Post("/:id/submit", func(c *fiber.Ctx) error {
+    achievementID := c.Params("id")
+    if len(achievementID) != 24 {
+        return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid achievement ID format"})
+    }
+    
+    // Ambil User ID (Mahasiswa)
+    userID, err := getUserID(c)
+    if err != nil { return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()}) }
+
+    // Panggil Service SubmitForVerification
+    err = achievementSvc.SubmitForVerification(c.Context(), achievementID, userID)
+    
+    if err != nil {
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+    }
+    return c.JSON(fiber.Map{"status": "success", "message": "Achievement submitted for verification"})
+})
 }

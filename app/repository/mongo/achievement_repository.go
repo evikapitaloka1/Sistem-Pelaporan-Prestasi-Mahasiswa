@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
+	"github.com/lib/pq"
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -64,19 +64,24 @@ func (r *mongoAchievementRepo) Create(ctx context.Context, achievement *models.A
 
 func (r *mongoAchievementRepo) GetByID(ctx context.Context, id primitive.ObjectID) (*models.Achievement, error) {
 	var achievement models.Achievement
-	filter := bson.M{"_id": id, "deletedAt": nil} // Hanya ambil yang belum dihapus
+    // Filter untuk soft delete dan mencoba mengabaikan data lama yang rusak (string kosong)
+    // NOTE: Filter ini bergantung pada bagaimana data rusak tersimpan. Mengandalkan *time.Time di Model sudah jadi langkah terbaik.
+	filter := bson.M{"_id": id, "deletedAt": nil} 
+	
 	err := r.collection.FindOne(ctx, filter).Decode(&achievement)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, errors.New("achievement not found or already deleted in MongoDB")
 		}
+		// Jika error decoding terjadi, kemungkinan data lama memiliki string kosong.
 		return nil, fmt.Errorf("mongo find failed: %w", err)
 	}
 	return &achievement, nil
 }
 
 func (r *mongoAchievementRepo) GetByIDs(ctx context.Context, ids []primitive.ObjectID) ([]models.Achievement, error) {
-	filter := bson.M{"_id": bson.M{"$in": ids}, "deletedAt": nil} // Hanya ambil yang belum dihapus
+    // Filter untuk soft delete
+	filter := bson.M{"_id": bson.M{"$in": ids}, "deletedAt": nil} 
 	cursor, err := r.collection.Find(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("mongo find many failed: %w", err)
@@ -85,6 +90,7 @@ func (r *mongoAchievementRepo) GetByIDs(ctx context.Context, ids []primitive.Obj
 
 	var achievements []models.Achievement
 	if err := cursor.All(ctx, &achievements); err != nil {
+        // Error ini adalah error Time Decoding. Fix ada di Model (*time.Time)
 		return nil, fmt.Errorf("mongo cursor decode failed: %w", err)
 	}
 	return achievements, nil
@@ -269,8 +275,9 @@ func (r *postgreAchievementRepo) UpdateReferenceStatus(ctx context.Context, refI
 	query := `
 		UPDATE achievement_references
 		SET status = $1, rejection_note = $2, verified_by = $3, updated_at = NOW(),
-			submitted_at = CASE WHEN $1 = 'submitted' THEN NOW() ELSE submitted_at END,
-			verified_at = CASE WHEN $1 = 'verified' THEN NOW() ELSE verified_at END
+		    -- 🛑 PERBAIKAN: Gunakan ::text untuk menghindari error tipe
+			submitted_at = CASE WHEN $1::text = 'submitted' THEN NOW() ELSE submitted_at END,
+			verified_at = CASE WHEN $1::text = 'verified' THEN NOW() ELSE verified_at END
 		WHERE id = $4
 	`
 	_, err := r.db.ExecContext(ctx, query, status, note, verifiedBy, refID)
@@ -310,8 +317,10 @@ func (r *postgreAchievementRepo) GetReferencesByStudentIDs(ctx context.Context, 
 			  FROM achievement_references 
 			  WHERE student_id = ANY($1)`
 	
-	rows, err := r.db.QueryContext(ctx, query, studentIDs)
+	// 🛑 KOREKSI 2: Mengatasi Error UUID Slice dengan pq.Array()
+	rows, err := r.db.QueryContext(ctx, query, pq.Array(studentIDs))
 	if err != nil {
+		// Error di sini sekarang pasti disebabkan oleh database atau masalah koneksi/type error (bukan pq.Array() lagi)
 		return nil, fmt.Errorf("postgre get references by IDs failed: %w", err)
 	}
 	defer rows.Close()
@@ -320,16 +329,9 @@ func (r *postgreAchievementRepo) GetReferencesByStudentIDs(ctx context.Context, 
 	for rows.Next() {
 		var ref models.AchievementReference
 		if err := rows.Scan(
-			&ref.ID,
-			&ref.StudentID,
-			&ref.MongoAchievementID,
-			&ref.Status,
-			&ref.SubmittedAt,
-			&ref.RejectionNote,
-			&ref.VerifiedBy,
-			&ref.VerifiedAt,
-			&ref.CreatedAt,
-			&ref.UpdatedAt,
+			&ref.ID, &ref.StudentID, &ref.MongoAchievementID, &ref.Status, &ref.SubmittedAt, &ref.RejectionNote, 
+            &ref.VerifiedBy, // FIX: Sudah menggunakan *uuid.UUID di Model
+            &ref.VerifiedAt, &ref.CreatedAt, &ref.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("postgre scan reference failed: %w", err)
 		}
@@ -376,10 +378,17 @@ func (r *postgreAchievementRepo) GetAllReferences(ctx context.Context) ([]models
 func (r *postgreAchievementRepo) UpdateReferenceForDelete(ctx context.Context, refID uuid.UUID, status models.AchievementStatus) error {
     
     // Query ini akan mengubah status menjadi StatusDeleted (yang dikirim dari service)
-    query := `UPDATE achievement_references 
-              SET status = $1, updated_at = NOW() 
-              WHERE id = $2`
-              
+    query := `
+    UPDATE achievement_references
+    SET status = $1::achievement_status, -- 🎯 CAST di sini
+        rejection_note = $2, 
+        verified_by = $3, 
+        updated_at = NOW(),
+        -- 🎯 CAST di sini juga (karena di sini dibandingkan dengan literal string)
+        submitted_at = CASE WHEN $1::text = 'submitted' THEN NOW() ELSE submitted_at END, 
+        verified_at = CASE WHEN $1::text = 'verified' THEN NOW() ELSE verified_at END
+    WHERE id = $4
+`           
     res, err := r.db.ExecContext(ctx, query, status, refID)
     if err != nil {
         return fmt.Errorf("postgre update status for soft delete failed: %w", err)
