@@ -266,28 +266,46 @@ func (s *AchievementServiceImpl) VerifyAchievement(ctx context.Context, mongoAch
 }
 
 // RejectAchievement: (Implementasi sudah benar)
-func (s *AchievementServiceImpl) RejectAchievement(ctx context.Context, mongoAchievementID string, lecturerID uuid.UUID, rejectionNote string) error {
-	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
-	if err != nil { return err }
+func (s *AchievementServiceImpl) RejectAchievement(ctx context.Context, mongoAchievementID string, lecturerIDFromToken uuid.UUID, rejectionNote string) error {
+    
+    // 1. Dapatkan Referensi Prestasi (PostgreSQL)
+    ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
+    if err != nil { return err }
 
-	if ref.Status != models.StatusSubmitted {
-		return errors.New("prestasi hanya bisa ditolak jika berstatus 'submitted'")
-	}
-	
-	if err := s.verifyAccessCheck(ctx, ref, lecturerID); err != nil { return err }
+    // 2. VALIDASI INPUT: Catatan penolakan harus diisi (Cek ini pertama untuk efisiensi)
+    if rejectionNote == "" { 
+        return errors.New("catatan penolakan harus diisi") 
+    }
 
-	if rejectionNote == "" { return errors.New("catatan penolakan harus diisi") }
+    // 3. VALIDASI STATUS: Prestasi harus submitted
+    if ref.Status != models.StatusSubmitted {
+        return errors.New("prestasi hanya bisa ditolak jika berstatus 'submitted'")
+    }
+    
+    // 4. KONVERSI ID DOSEN (users.id -> lecturers.id)
+    // Dapatkan ID Profil Dosen (lecturers.id) yang benar untuk disimpan dan dicek otorisasinya
+    lecturerProfileID, err := s.PostgreRepo.GetLecturerProfileID(ctx, lecturerIDFromToken) 
+    if err != nil {
+        return errors.New("user yang melakukan reject tidak memiliki profil dosen yang valid")
+    }
 
-	verifiedBy := sql.NullString{String: lecturerID.String(), Valid: true}
-	note := sql.NullString{String: rejectionNote, Valid: true}
+    // 5. VALIDASI OTORISASI: Memastikan Dosen adalah advisor (Menggunakan lecturerProfileID)
+    if err := s.verifyAccessCheck(ctx, ref, lecturerProfileID); err != nil { 
+        // Error otorisasi: "dosen ini tidak berhak memproses prestasi mahasiswa tersebut"
+        return err 
+    }
+    
+    // 6. Siapkan Data Update (Menggunakan lecturerProfileID yang sudah diverifikasi)
+    verifiedBy := sql.NullString{String: lecturerProfileID.String(), Valid: true} // Simpan lecturers.id
+    note := sql.NullString{String: rejectionNote, Valid: true}
 
-	if err := s.PostgreRepo.UpdateReferenceStatus(ctx, ref.ID, models.StatusRejected, note, verifiedBy); err != nil {
-		return err
-	}
-	return nil
+    // 7. Update status di PostgreSQL
+    if err := s.PostgreRepo.UpdateReferenceStatus(ctx, ref.ID, models.StatusRejected, note, verifiedBy); err != nil {
+        return err
+    }
+    
+    return nil
 }
-
-
 // -----------------------------------------------------------
 // Read Operations (FR-006, FR-010)
 // -----------------------------------------------------------

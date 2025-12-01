@@ -379,25 +379,62 @@ func (r *postgreAchievementRepo) GetAllReferences(ctx context.Context) ([]models
 
 // UpdateReferenceForDelete digunakan saat Mahasiswa menghapus prestasi draft (FR-005)
 // Add this function to your postgreAchievementRepo struct implementation block
-func (r *postgreAchievementRepo) UpdateReferenceStatus(ctx context.Context, refID uuid.UUID, status models.AchievementStatus, note sql.NullString, verifiedBy sql.NullString) error {
-	query := `
-    UPDATE achievement_references
-    SET status = $1::achievement_status, -- 🎯 CAST di sini
-        rejection_note = $2, 
-        verified_by = $3, 
-        updated_at = NOW(),
-        -- 🎯 CAST di sini juga (karena di sini dibandingkan dengan literal string)
-        submitted_at = CASE WHEN $1::text = 'submitted' THEN NOW() ELSE submitted_at END, 
-        verified_at = CASE WHEN $1::text = 'verified' THEN NOW() ELSE verified_at END
-    WHERE id = $4
-`
-	_, err := r.db.ExecContext(ctx, query, status, note, verifiedBy, refID)
-	if err != nil {
-		return fmt.Errorf("postgre update status failed: %w", err)
-	}
-	return nil
+// File: achievement_references_repository.go (atau sejenisnya)
+
+// repository/postgre/achievement_references_repository.go
+
+func (r *postgreAchievementRepo) UpdateReferenceStatus(
+    ctx context.Context,
+    refID uuid.UUID,
+    status models.AchievementStatus,
+    note sql.NullString,
+    verifiedBy sql.NullString,
+) error {
+
+    // Query update
+    query := `
+        UPDATE achievement_references
+        SET 
+            status = $1::achievement_status,
+            rejection_note = $2,
+            verified_by = $3,
+            updated_at = NOW(),
+
+            submitted_at = CASE 
+                WHEN $1::text = 'submitted' THEN NOW()
+                ELSE submitted_at 
+            END,
+
+            verified_at = CASE
+                WHEN $1::text IN ('verified', 'rejected') THEN NOW()
+                ELSE verified_at
+            END
+        WHERE id = $4;
+    `
+
+    // Eksekusi
+    res, err := r.db.ExecContext(ctx, query,
+        string(status), // PENTING: enum harus dikirim sebagai string
+        note,
+        verifiedBy,
+        refID,
+    )
+    if err != nil {
+        return fmt.Errorf("failed to update achievement status: %w", err)
+    }
+
+    // Validasi rows affected
+    rows, err := res.RowsAffected()
+    if err != nil {
+        return fmt.Errorf("failed to check rows affected: %w", err)
+    }
+    if rows == 0 {
+        return errors.New("achievement reference ID not found")
+    }
+
+    return nil
 }
-// Di dalam struct postgreAchievementRepo
+
 
 func (r *postgreAchievementRepo) GetLecturerProfileID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
     var lecturerProfileID uuid.UUID

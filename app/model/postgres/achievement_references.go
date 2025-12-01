@@ -122,3 +122,9 @@ type AchievementDetail struct {
     VerifiedBy string `json:"verifiedBy,omitempty"`
     RejectionNote string `json:"rejectionNote,omitempty"`
 }
+// Tambahkan struct ini ke file models Anda
+// Contoh di sini ditambahkan di file controller/dto Anda
+type RejectRequest struct {
+    // Tag JSON harus SAMA PERSIS dengan key yang dikirim di Postman (rejection_note)
+    RejectionNote string `json:"rejection_note"`
+}

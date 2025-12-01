@@ -359,27 +359,31 @@ func (s *AchievementServiceImpl) VerifyAchievement(ctx context.Context, mongoAch
 	return s.PostgreRepo.UpdateReferenceStatus(ctx, ref.ID, models.StatusVerified, note, verifiedBy)
 }
 // RejectAchievement: Mengubah status 'submitted' menjadi 'rejected' (FR-008)
-func (s *AchievementServiceImpl) RejectAchievement(ctx context.Context, mongoAchievementID string, lecturerID uuid.UUID, rejectionNote string) error {
-	// ... (Logika Precondition tetap sama)
-	
+// File: uas/app/service/mongo/achievement_service.go (RejectAchievement)
+
+func (s *AchievementServiceImpl) RejectAchievement(ctx context.Context, mongoAchievementID string, lecturerIDFromToken uuid.UUID, rejectionNote string) error {
+	// 1. Dapatkan Referensi Prestasi (PostgreSQL)
 	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
 	if err != nil { return err }
 
+	// 2. Validasi Status dan Catatan
 	if ref.Status != models.StatusSubmitted { return errors.New("prestasi hanya bisa ditolak jika berstatus 'submitted'") }
-	if err := s.verifyAccessCheck(ctx, ref, lecturerID); err != nil { return err }
-	if rejectionNote == "" { return errors.New("catatan penolakan harus diisi") }
+	if strings.TrimSpace(rejectionNote) == "" { return errors.New("catatan penolakan harus diisi") }
 
-	verifiedBy := sql.NullString{String: lecturerID.String(), Valid: true}
-	note := sql.NullString{String: rejectionNote, Valid: true}
+	// 🛑 KOREKSI: Panggil verifyAccessCheck dengan ID Token Dosen
+	if err := s.verifyAccessCheck(ctx, ref, lecturerIDFromToken); err != nil { 
+        return err // Mengembalikan error otorisasi
+    }
 
-	// FIX: Repository UpdateReferenceStatus sekarang menangani pq: inconsistent types
-	if err := s.PostgreRepo.UpdateReferenceStatus(ctx, ref.ID, models.StatusRejected, note, verifiedBy); err != nil {
-		return err
-	}
+	// Set data verifikasi
+	verifiedBy := sql.NullString{String: lecturerIDFromToken.String(), Valid: true}
+	note := sql.NullString{String: strings.TrimSpace(rejectionNote), Valid: true}
+
+	// Update status di PostgreSQL
+	if err := s.PostgreRepo.UpdateReferenceStatus(ctx, ref.ID, models.StatusRejected, note, verifiedBy); err != nil { return err }
 	
 	return nil
 }
-
 // -----------------------------------------------------------
 // Read Operations (FR-006, FR-010)
 // -----------------------------------------------------------
