@@ -11,19 +11,24 @@ import (
 )
 
 func main() {
-    db.Connect()
-    mongodb.Connect()
+	// 1. Inisialisasi Koneksi
+	db.Connect()
+	mongodb.Connect()
 
-    app := fiber.New()
+	// 2. Ambil instance koneksi DB PostgreSQL yang sudah aktif
+	postgreDB := db.GetDB() 
 
-    // Route PostgreSQL
-    postgresRoutes.RegisterRoutes(app)
+	app := fiber.New()
 
-    // Ambil collection MongoDB
-    achievementColl := mongodb.GetCollection("uas", "achievements")
+	// 3. Daftarkan Route PostgreSQL
+	// 🎯 FIX: Tambahkan postgreDB (*sql.DB) sebagai argumen kedua
+	postgresRoutes.RegisterRoutes(app, postgreDB) // Baris 20 sekarang benar
 
-    // Route MongoDB Achievement
-    mongoRoutes.RegisterRoutesMongo(app, achievementColl, db.GetDB())
+	// 4. Ambil collection MongoDB
+	achievementColl := mongodb.GetCollection("uas", "achievements")
 
-    app.Listen(":8080")
+	// 5. Route MongoDB Achievement (asumsi ini juga menggunakan koneksi Postgre untuk Auth/RBAC)
+	mongoRoutes.RegisterRoutesMongo(app, achievementColl, postgreDB)
+
+	app.Listen(":8080")
 }

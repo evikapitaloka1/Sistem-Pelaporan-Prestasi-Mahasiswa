@@ -3,7 +3,7 @@ package routes
 import (
 	"uas/app/model/postgres"
 	service "uas/app/service/postgres"
-
+	
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 )
@@ -70,6 +70,7 @@ func SetupAuthRoutes(router fiber.Router, authService *service.AuthService) {
 
 		user, err := authService.Profile(c.Context(), uid)
 		if err != nil {
+			
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
 		}
 
