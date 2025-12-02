@@ -519,16 +519,66 @@ var pqRefs []models.AchievementReference
 }
 
 // GetAchievementStatistics: Implementasi dasar untuk FR-011
-func (s *AchievementServiceImpl) GetAchievementStatistics(ctx context.Context, role string, userID uuid.UUID) (interface{}, error) {
-	// TODO: Implementasi query agregasi di Repository
-	return map[string]string{
-		"message": "Endpoint statistik masih dalam pengembangan (FR-011). Perlu implementasi agregasi di layer Repository/Database.",
-	}, nil
+// File: uas/app/service/mongo/achievement_service.go (Bagian GetAchievementStatistics)
+
+// ...
+
+// GetAchievementStatistics: Mengembalikan statistik status prestasi (Draft, Submitted, Verified, Rejected)
+// File: uas/app/service/mongo/achievement_service.go (Fungsi GetAchievementStatistics yang telah direvisi)
+
+// ...
+
+// GetAchievementStatistics: Mengembalikan statistik status prestasi (Draft, Submitted, Verified, Rejected)
+func (s *AchievementServiceImpl) GetAchievementStatistics(ctx context.Context, userRole string, userID uuid.UUID) (interface{}, error) {
+    
+    // 1. Validasi Otorisasi
+    role := strings.ToLower(userRole)
+    if role != "admin" {
+        return nil, errors.New("forbidden: hanya Admin yang dapat mengakses statistik global")
+    }
+
+    // 2. Ambil SEMUA referensi prestasi dari PostgreSQL
+    pqRefs, err := s.PostgreRepo.GetAllReferences(ctx)
+    if err != nil { 
+        return nil, fmt.Errorf("gagal mengambil referensi prestasi dari postgre: %w", err) 
+    }
+    
+    // 🛑 LANGKAH 3: Agregasi Statistik (DIPERBAIKI)
+    // Map untuk menghitung status.
+    stats := map[string]int{
+        // Baris 544-547: Konversi eksplisit ke string
+        string(models.StatusDraft):     0, 
+        string(models.StatusSubmitted): 0,
+        string(models.StatusVerified):  0,
+        string(models.StatusRejected):  0,
+    }
+    
+    // Looping dan Agregasi
+    for _, ref := range pqRefs {
+        // Abaikan status deleted (Asumsi status "deleted" adalah string biasa, jika tidak, konversi)
+        if ref.Status == "deleted" { 
+            continue
+        }
+        
+        // Baris 558-559: Konversi eksplisit ref.Status ke string saat mengakses map
+        statusKey := string(ref.Status) // Konversi tipe models.AchievementStatus ke string
+        
+        // Pengecekan status yang valid sebelum increment
+        if _, found := stats[statusKey]; found {
+             stats[statusKey]++ 
+        }
+    }
+    
+    // ... (Lanjutan kode untuk total dan finalStats)
+    total := len(pqRefs) 
+    
+    finalStats := map[string]interface{}{
+        "total_references": total,
+        "status_counts": stats, 
+    }
+
+    return finalStats, nil
 }
-// Di AchievementServiceImpl struct implementation:
-
-// Di AchievementServiceImpl struct implementation
-
 func (s *AchievementServiceImpl) GetAchievementHistory(ctx context.Context, mongoAchievementID string, userID uuid.UUID, userRole string) ([]models.AchievementReference, error) {
     
     // 1. Ambil Reference (PostgreSQL) untuk mendapatkan StudentID pemilik
