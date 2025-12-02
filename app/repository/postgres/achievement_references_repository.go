@@ -341,38 +341,72 @@ func (r *postgreAchievementRepo) GetAdviseeIDs(ctx context.Context, lecturerID u
 }
 
 // GetReferencesByStudentIDs mendapatkan semua references untuk sekumpulan Mahasiswa. (Dosen Wali View)
-func (r *postgreAchievementRepo) GetReferencesByStudentIDs(ctx context.Context, studentIDs []uuid.UUID) ([]models.AchievementReference, error) {
-	if len(studentIDs) == 0 {
-		return []models.AchievementReference{}, nil
-	}
-	
-	query := `SELECT id, student_id, mongo_achievement_id, status, submitted_at, rejection_note, verified_by, verified_at, created_at, updated_at 
-			  FROM achievement_references 
-			  WHERE student_id = ANY($1)`
-	
-	// 🛑 KOREKSI 1: Mengatasi Error UUID Slice dengan pq.Array()
-	rows, err := r.db.QueryContext(ctx, query, pq.Array(studentIDs))
-	if err != nil {
-		// Error di sini sekarang pasti disebabkan oleh database atau masalah koneksi
-		return nil, fmt.Errorf("postgre get references by IDs failed: %w", err)
-	}
-	defer rows.Close()
-	
-	var refs []models.AchievementReference
-	for rows.Next() {
-		var ref models.AchievementReference
-		if err := rows.Scan(
-			&ref.ID, &ref.StudentID, &ref.MongoAchievementID, &ref.Status, &ref.SubmittedAt, &ref.RejectionNote, 
-            &ref.VerifiedBy, // FIX: Sudah menggunakan *uuid.UUID di Model
-            &ref.VerifiedAt, &ref.CreatedAt, &ref.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("postgre scan reference failed: %w", err)
-		}
-		refs = append(refs, ref)
-	}
-	
-	return refs, nil
+// ================= Repository PostgreSQL =================
+
+func (r *postgreAchievementRepo) GetReferencesByStudentIDs(
+    ctx context.Context, 
+    studentIDs []uuid.UUID,
+) ([]models.AchievementReference, error) {
+
+    if len(studentIDs) == 0 {
+        return []models.AchievementReference{}, nil
+    }
+
+    query := `
+        SELECT id, student_id, mongo_achievement_id, status, submitted_at, rejection_note, verified_by, verified_at, created_at, updated_at
+        FROM achievement_references
+        WHERE student_id = ANY($1)
+    `
+
+    rows, err := r.db.QueryContext(ctx, query, pq.Array(studentIDs))
+    if err != nil {
+        return nil, fmt.Errorf("postgre get references by IDs failed: %w", err)
+    }
+    defer rows.Close()
+
+    var refs []models.AchievementReference
+
+    for rows.Next() {
+        var ref models.AchievementReference
+        var verifiedBy sql.NullString // UUID nullable sebagai string
+
+        if err := rows.Scan(
+            &ref.ID,
+            &ref.StudentID,
+            &ref.MongoAchievementID,
+            &ref.Status,
+            &ref.SubmittedAt,
+            &ref.RejectionNote,
+            &verifiedBy,
+            &ref.VerifiedAt,
+            &ref.CreatedAt,
+            &ref.UpdatedAt,
+        ); err != nil {
+            return nil, fmt.Errorf("postgre scan reference failed: %w", err)
+        }
+
+        // Convert verifiedBy string ke UUID pointer
+        if verifiedBy.Valid {
+            uid, err := uuid.Parse(verifiedBy.String)
+            if err == nil {
+                ref.VerifiedBy = &uid
+            } else {
+                ref.VerifiedBy = nil
+            }
+        } else {
+            ref.VerifiedBy = nil
+        }
+
+        refs = append(refs, ref)
+    }
+
+    if err := rows.Err(); err != nil {
+        return nil, fmt.Errorf("rows iteration error: %w", err)
+    }
+
+    return refs, nil
 }
+
 
 // GetAllReferences mendapatkan semua references. (Admin View)
 func (r *postgreAchievementRepo) GetAllReferences(ctx context.Context) ([]models.AchievementReference, error) {
@@ -517,4 +551,3 @@ func (r *postgreAchievementRepo) GetHistoryByMongoID(ctx context.Context, mongoI
     return refs, nil
 }
 // Di implementasi postgreAchievementRepo
-

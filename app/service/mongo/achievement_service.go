@@ -25,7 +25,7 @@ type AchievementService interface {
 	
 	GetAchievementDetail(ctx context.Context, id string, userID uuid.UUID, role string) (*models.AchievementDetail, error)
 	ListAchievements(ctx context.Context, role string, userID uuid.UUID) ([]models.AchievementDetail, error) 
-	
+	ListAchievementsByStudentID(ctx context.Context, targetStudentID string, userID uuid.UUID, userRole string) ([]models.AchievementDetail, error)
 	DeleteAchievement(ctx context.Context, id string, userID uuid.UUID, userRole string) error
 	
 	SubmitForVerification(ctx context.Context, id string, userID uuid.UUID) error 
@@ -613,4 +613,110 @@ func (s *AchievementServiceImpl) AddAttachment(ctx context.Context, mongoAchieve
     }
     
     return nil
+}
+func (s *AchievementServiceImpl) ListAchievementsByStudentID(
+    ctx context.Context, 
+    targetStudentIDString string, 
+    userID uuid.UUID, 
+    userRole string,
+) ([]models.AchievementDetail, error) {
+
+    // 1. Validasi Student ID Target
+    targetStudentID, err := uuid.Parse(targetStudentIDString)
+    if err != nil {
+        return nil, errors.New("format student ID tidak valid")
+    }
+
+    // 2. LOGIKA OTORISASI (RBAC/Kepemilikan)
+    canView := false
+    role := strings.ToLower(userRole)
+
+    switch role {
+    case "admin":
+        canView = true
+    case "mahasiswa":
+        // Mahasiswa hanya bisa melihat achievement miliknya sendiri
+        currentStudentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
+        if err == nil && currentStudentID == targetStudentID {
+            canView = true
+        }
+    case "dosen wali":
+        // Dosen wali diizinkan jika ID Target adalah mahasiswa bimbingannya
+        tempRef := &models.AchievementReference{StudentID: targetStudentID}
+        if err := s.verifyAccessCheck(ctx, tempRef, userID); err == nil {
+            canView = true
+        }
+    }
+
+    if !canView {
+        return nil, errors.New("forbidden: tidak memiliki hak akses untuk melihat prestasi mahasiswa ini")
+    }
+
+    // 3. Ambil References dari PostgreSQL (filter berdasarkan Student ID target)
+    pqRefs, err := s.PostgreRepo.GetReferencesByStudentIDs(ctx, []uuid.UUID{targetStudentID})
+    if err != nil {
+        return nil, fmt.Errorf("gagal mengambil referensi prestasi dari postgre: %w", err)
+    }
+
+    if len(pqRefs) == 0 {
+        return []models.AchievementDetail{}, nil
+    }
+
+    // 4. Proses dan filter references yang valid (tidak dihapus)
+    mongoIDs := make([]primitive.ObjectID, 0, len(pqRefs))
+    refMap := make(map[string]models.AchievementReference)
+
+    for _, ref := range pqRefs {
+        if ref.Status == models.StatusDeleted || ref.MongoAchievementID == "" {
+            continue
+        }
+
+        objectID, err := primitive.ObjectIDFromHex(ref.MongoAchievementID)
+        if err != nil {
+            continue // abaikan ID Mongo yang invalid
+        }
+
+        mongoIDs = append(mongoIDs, objectID)
+        refMap[ref.MongoAchievementID] = ref
+    }
+
+    if len(mongoIDs) == 0 {
+        return []models.AchievementDetail{}, nil
+    }
+
+    // 5. Ambil detail dari MongoDB
+    mongoDocs, err := s.MongoRepo.GetByIDs(ctx, mongoIDs)
+    if err != nil {
+        return nil, fmt.Errorf("gagal fetch detail dari MongoDB: %w", err)
+    }
+
+    // 6. Gabungkan data Reference dan Mongo Document
+    details := make([]models.AchievementDetail, 0, len(mongoDocs))
+    for _, doc := range mongoDocs {
+        if ref, found := refMap[doc.ID.Hex()]; found {
+            var submittedAt *time.Time
+            if ref.SubmittedAt.Valid { submittedAt = &ref.SubmittedAt.Time }
+
+            var verifiedAt *time.Time
+            if ref.VerifiedAt.Valid { verifiedAt = &ref.VerifiedAt.Time }
+
+            details = append(details, models.AchievementDetail{
+                Achievement:   doc,
+                ReferenceID:   ref.ID.String(),
+                Status:        ref.Status,
+                SubmittedAt:   submittedAt,
+                VerifiedAt:    verifiedAt,
+                VerifiedBy: func() string {
+                    if ref.VerifiedBy != nil { return ref.VerifiedBy.String() }
+                    return ""
+                }(),
+                RejectionNote: func() string {
+                    if ref.RejectionNote.Valid { return ref.RejectionNote.String }
+                    return ""
+                }(),
+            })
+        }
+    }
+
+    return details, nil
 }
