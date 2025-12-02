@@ -3,8 +3,7 @@ package service
 import (
 	"context"
 	"errors"
-
-
+	"strings"
 	"github.com/google/uuid"
 	repo "uas/app/repository/postgres" // Asumsi path repository
 	models "uas/app/model/postgres"    // Asumsi path model
@@ -41,23 +40,24 @@ func (s *StudentServiceImpl) GetStudentDetail(ctx context.Context, studentIDStr 
 
 // Implementasi UpdateAdvisor (Hanya Admin yang diizinkan mengganti dosen wali)
 func (s *StudentServiceImpl) UpdateAdvisor(ctx context.Context, studentIDStr string, newAdvisorIDStr string, callerRole string) error {
-	// 1. Validasi Role (Logika Bisnis: Hanya Admin)
-	if callerRole != "admin" {
-		return errors.New("forbidden: only admin can update advisor")
-	}
 
-	// 2. Parse IDs
-	studentID, err := uuid.Parse(studentIDStr)
-	if err != nil {
-		return errors.New("invalid student ID format")
-	}
-	newAdvisorID, err := uuid.Parse(newAdvisorIDStr)
-	if err != nil {
-		return errors.New("invalid advisor ID format")
-	}
-    
-    // ⚠️ Tambahkan validasi: Cek apakah newAdvisorID valid sebagai Dosen/Lecturer (membutuhkan LecturerRepo)
+    if callerRole != "admin" {
+        return errors.New("forbidden: only admin can update advisor")
+    }
 
-	// 3. Update di Repository
-	return s.Repo.UpdateAdvisor(ctx, studentID, newAdvisorID)
+    // 👇 WAJIB TAMBAH INI
+    studentIDStr = strings.TrimSpace(studentIDStr)
+    newAdvisorIDStr = strings.TrimSpace(newAdvisorIDStr)
+
+    studentID, err := uuid.Parse(studentIDStr)
+    if err != nil {
+        return errors.New("invalid student ID format")
+    }
+
+    newAdvisorID, err := uuid.Parse(newAdvisorIDStr)
+    if err != nil {
+        return errors.New("invalid advisor ID format")
+    }
+
+    return s.Repo.UpdateAdvisor(ctx, studentID, newAdvisorID)
 }

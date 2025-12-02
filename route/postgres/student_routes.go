@@ -4,19 +4,13 @@ import (
 	"net/http"
 	"github.com/gofiber/fiber/v2"
 	authService "uas/app/service/postgres"
-	studentService "uas/app/service/postgres" // Asumsi path service
-	mw "uas/middleware" // Asumsi path middleware
+	studentService "uas/app/service/postgres"
+	mw "uas/middleware"
 )
 
-// DTO untuk body request PUT /advisor
-type UpdateAdvisorRequest struct {
-    NewAdvisorID string `json:"advisorId"` // Menggunakan nama field yang konsisten
-}
-
-// StudentRoutes mendefinisikan rute untuk Student.
 func StudentRoutes(
 	api fiber.Router,
-	authSvc *authService.AuthService, // Asumsi Auth Service ada untuk RBAC
+	authSvc *authService.AuthService,
 	studentSvc studentService.StudentService,
 ) {
 	jwtMiddleware := mw.JWTMiddleware()
@@ -25,7 +19,7 @@ func StudentRoutes(
 
 	students := api.Group("/students", jwtMiddleware)
 
-	// GET /api/v1/students (List semua students)
+	// GET list
 	students.Get("/", rbacRead, func(c *fiber.Ctx) error {
 		result, err := studentSvc.ListStudents(c.Context())
 		if err != nil {
@@ -34,7 +28,7 @@ func StudentRoutes(
 		return c.JSON(fiber.Map{"status": "success", "data": result})
 	})
 
-	// GET /api/v1/students/:id (Detail student)
+	// GET detail
 	students.Get("/:id", rbacRead, func(c *fiber.Ctx) error {
 		studentID := c.Params("id")
 		result, err := studentSvc.GetStudentDetail(c.Context(), studentID)
@@ -44,22 +38,26 @@ func StudentRoutes(
 		return c.JSON(fiber.Map{"status": "success", "data": result})
 	})
 
-	// PUT /api/v1/students/:id/advisor (Update Dosen Wali)
+	// PUT update advisor
 	students.Put("/:id/advisor", rbacUpdate, func(c *fiber.Ctx) error {
 		studentID := c.Params("id")
-		var req UpdateAdvisorRequest
-        
-		if err := c.BodyParser(&req); err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+
+		// Tanpa model
+		body := struct {
+			NewAdvisorID string `json:"new_advisor_id"`
+		}{}
+
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		// Ambil Role dari context (asumsi getRole ada atau sudah di setup)
-        callerRole, _ := c.Locals("role").(string)
+		role := c.Locals("role").(string)
 
-		err := studentSvc.UpdateAdvisor(c.Context(), studentID, req.NewAdvisorID, callerRole)
+		err := studentSvc.UpdateAdvisor(c.Context(), studentID, body.NewAdvisorID, role)
 		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.JSON(fiber.Map{"status": "success", "message": "Dosen wali berhasil diupdate"})
+
+		return c.JSON(fiber.Map{"status": "success"})
 	})
 }
