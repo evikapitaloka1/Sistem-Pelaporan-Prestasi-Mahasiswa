@@ -13,3 +13,9 @@ type Lecturer struct {
 	Department   string    `json:"department"`
 	CreatedAt    time.Time `json:"createdAt"`
 }
+type Advisee struct {
+	ID  uuid.UUID `json:"id"`
+	StudentID string `json:"studentId"` // NIM
+	Name string `json:"name"`
+	Department string `json:"department"`
+}

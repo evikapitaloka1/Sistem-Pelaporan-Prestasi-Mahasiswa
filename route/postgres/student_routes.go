@@ -8,7 +8,7 @@ import (
 	mongo "uas/app/service/mongo"
 	authService "uas/app/service/postgres"
 	studentService "uas/app/service/postgres"
-	mw "uas/middleware"
+	mw "uas/middleware" // Asumsi ini adalah lokasi RBAC
 )
 
 // StudentRoutes setup semua route terkait student
@@ -17,18 +17,21 @@ func StudentRoutes(
 	authSvc *authService.AuthService,
 	studentSvc studentService.StudentService,
 	achievementSvc mongo.AchievementService,
-	jwtMiddleware fiber.Handler, // 🛑 PERBAIKAN 1: Menerima handler yang sudah siap
+	jwtMiddleware fiber.Handler, // Menerima handler yang sudah siap
 ) {
-	// 🛑 BARIS LAMA DIHAPUS: jwtMiddleware := mw.JWTMiddleware() 
-
-	// Buat RBAC Middleware (yang masih membutuhkan authSvc)
+	// Buat RBAC Middleware. PENTING: Middleware ini harus dimodifikasi untuk
+	// memungkinkan Superadmin melewati pengecekan izin umum (akan dijelaskan di rbac.go)
 	rbacRead := mw.RBACMiddleware("student:read", authSvc)
 	rbacUpdate := mw.RBACMiddleware("student:update", authSvc)
 
 	// Grup Route menggunakan jwtMiddleware yang sudah di-inject
-	students := api.Group("/students", jwtMiddleware) // 🛑 PERBAIKAN 2: Gunakan handler yang di-inject
+	students := api.Group("/students", jwtMiddleware) // Gunakan handler yang di-inject
 
-	// GET list
+	// =========================================================================================
+	// 1. GET list (Hanya Admin yang boleh, menggunakan rbacRead yang dimodifikasi atau rbacManage)
+	// =========================================================================================
+	// Catatan: Jika student:read hanya untuk admin, gunakan rbacRead yang dimodifikasi
+	// agar admin dengan user:manage bisa mengakses ini.
 	students.Get("/", rbacRead, func(c *fiber.Ctx) error {
 		result, err := studentSvc.ListStudents(c.Context())
 		if err != nil {
@@ -37,17 +40,55 @@ func StudentRoutes(
 		return c.JSON(fiber.Map{"status": "success", "data": result})
 	})
 
-	// GET detail
+	// =========================================================================================
+	// 2. GET detail /:id (HANYA UNTUK DIRI SENDIRI atau ADMIN)
+	//    Logika pengecekan kepemilikan dipindahkan ke dalam handler.
+	// =========================================================================================
+	// Kita masih menggunakan rbacRead di sini, TAPI middleware RBAC harus mengizinkan
+	// akses jika targetID (param) = UserID (locals) ATAU jika user punya user:manage.
 	students.Get("/:id", rbacRead, func(c *fiber.Ctx) error {
-		studentID := c.Params("id")
-		result, err := studentSvc.GetStudentDetail(c.Context(), studentID)
+		targetStudentID := c.Params("id")
+		
+		// Ambil data User ID dan Role dari Locals
+		userIDStr, ok := c.Locals("userID").(string)
+		if !ok || userIDStr == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "User ID missing or invalid from token"})
+		}
+		
+		userRole, _ := c.Locals("role").(string) // Ambil role untuk referensi
+
+		// 🛑 LOGIKA PENGENDALIAN AKSES BERBASIS KEPEMILIKAN 🛑
+		isOwner := targetStudentID == userIDStr
+		
+		// Admin/Superadmin diizinkan akses ke siapa pun (asumsi RBAC sudah mengecek izin read)
+		// Kita butuh fungsi di service/middleware untuk cek apakah user adalah admin
+		// Untuk sementara, kita mengandalkan bahwa jika user bukan owner,
+		// maka RBAC middleware (rbacRead) harusnya sudah memastikan user adalah Admin.
+		// Namun, cara yang lebih bersih adalah:
+
+		// Jika pengguna mencoba melihat ID orang lain DAN dia bukan Admin/Dosen yang berhak, tolak.
+		// Karena kita menggunakan rbacRead, kita berasumsi bahwa student:read sudah cukup.
+		// Jika ini adalah data sendiri, kita biarkan lewat.
+		
+		if !isOwner && userRole != "Administrator" {
+		    // Catatan: Jika userRole tidak membedakan Dosen dan Mahasiswa, logika ini harus diperluas.
+		    // Jika bukan owner dan bukan Admin, tolak.
+            return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+                "error": "Akses ditolak. Anda hanya dapat melihat data profil Anda sendiri.",
+            })
+		}
+		// --------------------------------------------------------------------------
+
+		result, err := studentSvc.GetStudentDetail(c.Context(), targetStudentID)
 		if err != nil {
 			return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.JSON(fiber.Map{"status": "success", "data": result})
 	})
 
-	// PUT update advisor
+	// =========================================================================================
+	// 3. PUT update advisor (Hanya Admin yang boleh, menggunakan rbacUpdate yang dimodifikasi)
+	// =========================================================================================
 	students.Put("/:id/advisor", rbacUpdate, func(c *fiber.Ctx) error {
 		studentID := c.Params("id")
 
@@ -69,9 +110,10 @@ func StudentRoutes(
 		return c.JSON(fiber.Map{"status": "success"})
 	})
 
-	// GET achievements by student ID (Perbaikan)
+	// =========================================================================================
+	// 4. GET achievements by student ID (HANYA UNTUK DIRI SENDIRI atau ADMIN/DOSEN)
+	// =========================================================================================
 	students.Get("/:id/achievements", rbacRead, func(c *fiber.Ctx) error {
-		// Ambil student ID dari path param
 		targetStudentID := c.Params("id")
 		if targetStudentID == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -79,41 +121,15 @@ func StudentRoutes(
 			})
 		}
 
-		// --- 🛑 PENGAMBILAN DAN VALIDASI USER ID DARI TOKEN LOCALS 🛑 ---
-		var userIDStr string
-
-		// 1️⃣ Ambil User ID dari locals (setelah middleware auth)
-		userLocals := c.Locals("userID")
-		if userLocals == nil {
+		// --- PENGAMBILAN DAN VALIDASI USER ID DARI TOKEN LOCALS ---
+		userIDStr, ok := c.Locals("userID").(string)
+		if !ok || userIDStr == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "User ID missing from token locals",
+				"error": "User ID missing or invalid from token locals",
 			})
 		}
-
-		// Coba konversi ke string
-		if str, ok := userLocals.(string); ok {
-			userIDStr = str
-		} else if uid, ok := userLocals.(uuid.UUID); ok {
-			// Jika disimpan sebagai objek UUID, konversi ke string
-			userIDStr = uid.String()
-		}
-
-		if userIDStr == "" {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "User ID missing or invalid type from token",
-			})
-		}
-		// --------------------------------------------------------------------------
-
-		// 2️⃣ Parse string ke UUID
-		parsedUserID, err := uuid.Parse(userIDStr)
-		if err != nil {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "Invalid user ID format in token",
-			})
-		}
-
-		// 3️⃣ Ambil Role dari locals
+		
+		// Ambil Role
 		userRole, ok := c.Locals("role").(string)
 		if !ok || userRole == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -121,10 +137,31 @@ func StudentRoutes(
 			})
 		}
 
-		// 4️⃣ Panggil service untuk ambil achievements
+		// 🛑 LOGIKA PENGENDALIAN AKSES BERBASIS KEPEMILIKAN 🛑
+		// 1. Cek apakah pengguna adalah pemilik data (self-referential check)
+		isOwner := targetStudentID == userIDStr
+		
+		// 2. Jika bukan pemilik data, kita perlu cek role.
+		// Jika role adalah "Mahasiswa" dan target ID bukan ID-nya, tolak segera.
+		// Dosen atau Admin akan diizinkan melalui logika di service (Poin 4).
+		if !isOwner && userRole == "Mahasiswa" {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"error": "Akses ditolak. Anda hanya dapat melihat data prestasi Anda sendiri.",
+			})
+		}
+		// --------------------------------------------------------------------------
+
+		// Parse string ID ke UUID untuk dikirim ke Service
+		parsedUserID, err := uuid.Parse(userIDStr)
+		if err != nil {
+			// Ini seharusnya tidak terjadi jika token JWT valid
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid user ID format in token"})
+		}
+		
+		// 4. Panggil service untuk ambil achievements
+		// Logika: Service akan memeriksa apakah pengguna adalah admin, atau dosen dari mahasiswa tersebut.
 		result, err := achievementSvc.ListAchievementsByStudentID(c.Context(), targetStudentID, parsedUserID, userRole)
 		if err != nil {
-			// Menggunakan StatusUnauthorized jika errornya adalah forbidden/akses ditolak
 			if err.Error() == "forbidden: tidak memiliki hak akses untuk melihat prestasi mahasiswa ini" {
 				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 					"error": err.Error(),
@@ -135,7 +172,7 @@ func StudentRoutes(
 			})
 		}
 
-		// 5️⃣ Return hasil
+		// 5. Return hasil
 		return c.JSON(fiber.Map{
 			"status": "success",
 			"data": result,

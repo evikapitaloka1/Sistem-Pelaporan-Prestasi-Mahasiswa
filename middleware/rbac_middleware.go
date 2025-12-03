@@ -4,12 +4,16 @@ import (
 	"fmt"
 	"strings" 
 	service "uas/app/service/postgres" 
-
-	"github.com/gofiber/fiber/v2"
+	 
+	// ✅ FIX: Tambahkan import UUID karena HasPermission menggunakannya
 	"github.com/google/uuid"
+	"github.com/gofiber/fiber/v2"
+
 )
 
 // RBACMiddleware memverifikasi apakah user memiliki izin yang diperlukan.
+// PENTING: Middleware ini sekarang menggunakan HasPermission (User-centric) karena
+// GetPermissionsByRole tidak tersedia.
 func RBACMiddleware(permission string, authService service.IAuthService) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		
@@ -21,61 +25,65 @@ func RBACMiddleware(permission string, authService service.IAuthService) fiber.H
 
 		if !ok || normalizedRole == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"code": 	 401,
+				"code": 	401,
 				"error": "Role is missing from context. Please login again.",
 			})
 		}
 
-		// 2. LOGIKA BYPASS ADMIN
+		// 2. LOGIKA BYPASS ADMIN (Menggunakan role 'admin' yang sudah dinormalisasi)
 		if normalizedRole == "admin" {
 			return c.Next() // Admin selalu diizinkan
 		}
 		
-		// 3. Ambil dan Parse userID dari JWT middleware 
+		// 3. PENGAMBILAN USER ID (Wajib untuk HasPermission)
 		
-        // 🛑 KOREKSI UTAMA 1: Ambil sebagai STRING
-		userIDStr, okStr := c.Locals("userID").(string)
-		if !okStr || userIDStr == "" {
-            // Ini akan menangani error "User ID missing or invalid from token"
-            // jika token tidak di-set sama sekali
+		var userIDStr string
+		userLocals := c.Locals("userID")
+		
+		// Ambil User ID sebagai string (tipe dari JWTMiddleware) atau UUID (jika tipe lama)
+		if str, ok := userLocals.(string); ok {
+			userIDStr = str
+		} else if uid, ok := userLocals.(uuid.UUID); ok {
+			userIDStr = uid.String()
+		}
+
+		if userIDStr == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"code": 	 401,
-				"error": "User ID missing from context (Must be string).",
+				"code": 	401,
+				"error": "User ID missing or invalid type from token.",
 			})
 		}
-        
-        // 🛑 KOREKSI UTAMA 2: Parse STRING menjadi UUID
-        userID, err := uuid.Parse(userIDStr)
-        if err != nil {
-             return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"code": 	 500,
+
+		// Parse string ke UUID
+		userID, err := uuid.Parse(userIDStr) 
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"code": 	500,
 				"error": "Internal Server Error: User ID in context is not a valid UUID format.",
 			})
-        }
-        
-        // 🛑 KOREKSI UTAMA 3: Set kembali userID ke locals sebagai UUID 
-        //                    agar service bisa menggunakannya (Opsional, tapi membantu)
-        c.Locals("parsedUserID", userID) // Gunakan key baru atau timpa jika JWT menyimpannya sebagai string
+		}
 
-		// 4. Cek permission menggunakan Service (Postgres)
+		// 4. Cek permission menggunakan HasPermission (User-centric Check)
+		// ✅ FIX: Memanggil HasPermission dengan 3 argumen yang sesuai
 		hasPerm, err := authService.HasPermission(c.Context(), userID, permission)
 		
 		if err != nil {
+			// Gagal menghubungi database
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"code": 	 500,
-				"error": fmt.Sprintf("Gagal cek permission: %v", err),
+				"code": 	500,
+				"error": fmt.Sprintf("Gagal memeriksa izin: %v", err),
 			})
 		}
-
+		
 		if !hasPerm {
 			// Mengembalikan error 403 Forbidden
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-				"code": 	 403,
+				"code": 	403,
 				"error": fmt.Sprintf("Akses ditolak: Tidak memiliki izin '%s'", permission),
 			})
 		}
-
-		// 5. Lanjut ke handler berikutnya 
+		
+		// 5. Lanjut ke handler berikutnya (Lolos RBAC)
 		return c.Next()
 	}
 }

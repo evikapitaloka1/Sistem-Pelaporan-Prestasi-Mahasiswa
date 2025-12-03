@@ -16,6 +16,8 @@ import (
 	authService "uas/app/service/postgres"
 	studentService "uas/app/service/postgres"
 	achievementService "uas/app/service/mongo"
+	// Tambahkan import service Dosen
+	lecturerService "uas/app/service/postgres" 
 )
 
 // Definisikan struct wrapper yang mengimplementasikan mw.TokenBlacklistChecker
@@ -42,9 +44,11 @@ func RegisterRoutes(app *fiber.App, db *sql.DB, mongoClient *mongo.Client) {
 	// 2. Inisialisasi Student Repository
 	studentRepoInst := postgresRepo.NewStudentRepository(db) 
 	
-	// ✅ FIX 1: Menghapus argumen 'db' karena compiler mengindikasikan NewUserRepository() 
-	// seharusnya dipanggil tanpa argumen.
+	// 3. Inisialisasi User Repository
 	userRepoInst := postgresRepo.NewUserRepository()
+
+	// ✅ TAMBAH: Inisialisasi Lecturer Repository
+	lecturerRepoInst := postgresRepo.NewLecturerRepository(db) 
 	
 	// 4. Buat Checker instance yang memegang Repo
 	blacklistCheckerInst := &AuthBlacklistChecker{repo: authRepoInst}
@@ -62,6 +66,9 @@ func RegisterRoutes(app *fiber.App, db *sql.DB, mongoClient *mongo.Client) {
 
 	// Student Service menggunakan Student Repo yang diinisialisasi di atas
 	studentServiceInst := studentService.NewStudentService(studentRepoInst)
+	
+	// ✅ TAMBAH: Inisialisasi Lecturer Service
+	lecturerServiceInst := lecturerService.NewLecturerService(lecturerRepoInst)
 
 	// ===== Achievement =====
 	achievementCollection := mongoClient.Database("uas").Collection("achievements")
@@ -80,6 +87,9 @@ func RegisterRoutes(app *fiber.App, db *sql.DB, mongoClient *mongo.Client) {
 	SetupAuthRoutes(api, authServiceInst, jwtMiddleware)
 
 	StudentRoutes(api, authServiceInst, studentServiceInst, achievementServiceInst, jwtMiddleware)
+	
+	// ✅ TAMBAH: Pendaftaran Lecturer Routes
+	SetupLecturerRoutes(api, authServiceInst, lecturerServiceInst, jwtMiddleware)
 
 	ReportRoutes(api, authServiceInst, achievementServiceInst, jwtMiddleware)
 }
