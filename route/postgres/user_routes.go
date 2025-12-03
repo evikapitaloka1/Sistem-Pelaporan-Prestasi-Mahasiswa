@@ -1,22 +1,35 @@
 package routes
 
 import (
-	"uas/app/service/postgres"
-	"uas/middleware"
+	postgres"uas/app/service/postgres"
+	mw "uas/middleware" // 🛑 PERBAIKAN 1: Import package middleware dengan alias 'mw'
+	
+	// Catatan: Interface IUserService dan IAuthService diasumsikan didefinisikan di service "uas/app/service/postgres"
+	// Catatan: model.CreateUserRequest dll. diasumsikan didefinisikan di "uas/app/model/postgres"
+	
 	"uas/app/model/postgres"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 )
 
+// 🛑 PERBAIKAN SIGNATURE: Menerima jwtMiddleware yang sudah siap dari RegisterRoutes
 func SetupUserRoutes(
 	router fiber.Router,
-	userService service.IUserService,
-	authService service.IAuthService,
+	userService postgres.IUserService,
+	authService postgres.IAuthService,
+	jwtMiddleware fiber.Handler, // 🛑 Menerima JWT Handler yang sudah disuntikkan
 ) {
-	users := router.Group("/users", middleware.JWTMiddleware())
+	// Inisialisasi RBAC Middleware (Asumsi PermissionMiddleware Anda adalah RBACMiddleware)
+	rbacManage := mw.RBACMiddleware("user:manage", authService)
+	// rbacRead := mw.RBACMiddleware("user:read", authService) // Tambahkan jika perlu
+
+	// 🛑 PERBAIKAN 2: Gunakan jwtMiddleware yang di-inject. Tidak perlu memanggil JWTMiddleware lagi.
+	// users := router.Group("/users", mw.JWTMiddleware(blacklistChecker)) // <--- BARIS LAMA
+	users := router.Group("/users", jwtMiddleware)
 
 	// GET all users (hanya yang punya permission "user:manage")
-	users.Get("/", middleware.PermissionMiddleware("user:manage", authService), func(c *fiber.Ctx) error {
+	// 🛑 PERBAIKAN 3: Ganti middleware.PermissionMiddleware menjadi rbacManage
+	users.Get("/", rbacManage, func(c *fiber.Ctx) error {
 		list, err := userService.GetAllUsers(c.Context())
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
@@ -25,7 +38,7 @@ func SetupUserRoutes(
 	})
 
 	// GET user by ID
-	users.Get("/:id", middleware.PermissionMiddleware("user:manage", authService), func(c *fiber.Ctx) error {
+	users.Get("/:id", rbacManage, func(c *fiber.Ctx) error {
 		idParam := c.Params("id")
 		userID, err := uuid.Parse(idParam)
 		if err != nil {
@@ -40,7 +53,7 @@ func SetupUserRoutes(
 	})
 
 	// POST create user
-	users.Post("/", middleware.PermissionMiddleware("user:manage", authService), func(c *fiber.Ctx) error {
+	users.Post("/", rbacManage, func(c *fiber.Ctx) error {
 		var req model.CreateUserRequest
 		if err := c.BodyParser(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -54,7 +67,7 @@ func SetupUserRoutes(
 	})
 
 	// PUT update user
-	users.Put("/:id", middleware.PermissionMiddleware("user:manage", authService), func(c *fiber.Ctx) error {
+	users.Put("/:id", rbacManage, func(c *fiber.Ctx) error {
 		idParam := c.Params("id")
 		userID, err := uuid.Parse(idParam)
 		if err != nil {
@@ -73,7 +86,7 @@ func SetupUserRoutes(
 	})
 
 	// DELETE user
-	users.Delete("/:id", middleware.PermissionMiddleware("user:manage", authService), func(c *fiber.Ctx) error {
+	users.Delete("/:id", rbacManage, func(c *fiber.Ctx) error {
 		idParam := c.Params("id")
 		userID, err := uuid.Parse(idParam)
 		if err != nil {

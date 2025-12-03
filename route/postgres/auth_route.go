@@ -1,14 +1,19 @@
 package routes
 
 import (
-	"uas/app/model/postgres"
-	service "uas/app/service/postgres"
-	
+	"strings"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	
+	// Import yang diperlukan berdasarkan penggunaan di body
+	model "uas/app/model/postgres" 	
+	service "uas/app/service/postgres" 
 )
 
-func SetupAuthRoutes(router fiber.Router, authService *service.AuthService) {
+// SetupAuthRoutes mendefinisikan semua rute autentikasi.
+// Menerima jwtMiddleware yang sudah siap (termasuk TokenBlacklistChecker) untuk rute yang dilindungi.
+func SetupAuthRoutes(router fiber.Router, authService *service.AuthService, jwtMiddleware fiber.Handler) {
 
 	auth := router.Group("/auth")
 
@@ -29,15 +34,34 @@ func SetupAuthRoutes(router fiber.Router, authService *service.AuthService) {
 
 	// ================= REFRESH =================
 	auth.Post("/refresh", func(c *fiber.Ctx) error {
-		var payload struct {
-			RefreshToken string `json:"refresh_token"`
+		var refreshToken string
+		
+		// 1. Coba ambil dari Authorization Header (Bearer Token)
+		authHeader := c.Get("Authorization")
+		if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
+			refreshToken = strings.TrimPrefix(authHeader, "Bearer ")
 		}
 
-		if err := c.BodyParser(&payload); err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
-		}
+		// 2. Jika tidak ada di Header, coba ambil dari JSON Body
+		if refreshToken == "" {
+			var payload struct {
+				RefreshToken string `json:"refresh_token"`
+			}
 
-		token, err := authService.Refresh(c.Context(), payload.RefreshToken)
+			// Mengabaikan error parsing, karena token mungkin ada di header
+			_ = c.BodyParser(&payload) 
+			
+			if payload.RefreshToken != "" {
+				refreshToken = payload.RefreshToken
+			}
+		}
+		
+		// 3. Validasi akhir token
+		if refreshToken == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Refresh token missing from header or body"})
+		}
+		
+		token, err := authService.Refresh(c.Context(), refreshToken)
 		if err != nil {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
 		}
@@ -45,32 +69,41 @@ func SetupAuthRoutes(router fiber.Router, authService *service.AuthService) {
 		return c.JSON(fiber.Map{"token": token})
 	})
 
-	// ================= LOGOUT =================
-	auth.Post("/logout", func(c *fiber.Ctx) error {
-		err := authService.Logout(c.Context())
+	// ================= LOGOUT (DENGAN MIDDLEWARE) =================
+	// ✅ Middleware jwtMiddleware WAJIB di sini agar JTI tersedia.
+	auth.Post("/logout", jwtMiddleware, func(c *fiber.Ctx) error {
+		
+		// 1. Ambil JTI dari Locals (diset oleh JWTMiddleware)
+		jti, ok := c.Locals("jti").(string)
+		if !ok || jti == "" {
+			// ✅ PERBAIKAN STATUS: Menggunakan 401 Unauthorized karena token tidak memiliki claim yang krusial (JTI)
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "JTI not available in locals for logout. Token is missing JTI claim."})
+		}
+		
+		// 2. Panggil service untuk mencabut token (memerlukan JTI)
+		err := authService.Logout(c.Context(), jti) 
 		if err != nil {
+			// Asumsi error di service adalah internal atau masalah DB, kembalikan 500
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
 		return c.JSON(fiber.Map{"message": "logout success"})
-	})
+	}) 
 
-	// ================= PROFILE =================
-	auth.Get("/profile", func(c *fiber.Ctx) error {
+	// ================= PROFILE (DENGAN MIDDLEWARE) =================
+	auth.Get("/profile", jwtMiddleware, func(c *fiber.Ctx) error {
 
-		userIDHeader := c.Get("X-User-ID")
-		if userIDHeader == "" {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "missing user id"})
+		// 1. Ambil userID dari Locals (sudah uuid.UUID berkat perbaikan middleware)
+		userIDLocal := c.Locals("userID")
+		
+		uid, ok := userIDLocal.(uuid.UUID)
+		if !ok {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "User ID missing or invalid type in token payload"})
 		}
 
-		uid, err := uuid.Parse(userIDHeader)
-		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid user id"})
-		}
-
+		// 2. Panggil Service
 		user, err := authService.Profile(c.Context(), uid)
 		if err != nil {
-			
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
 		}
 

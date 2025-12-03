@@ -1,54 +1,85 @@
 package routes
 
 import (
-	"database/sql"
-	// 🛑 PERBAIKAN: Import package mongo-driver/mongo untuk tipe *mongo.Client
-	"github.com/gofiber/fiber/v2"
-	"go.mongodb.org/mongo-driver/mongo" 
-	
-	// Import package lokal Anda
-	
-	// Pastikan semua path import di bawah ini sudah benar
-	authRepo "uas/app/repository/postgres"
-	studentRepo "uas/app/repository/postgres"
-	achievementRepoMongo "uas/app/repository/mongo"
-	achievementRepoPostgres "uas/app/repository/postgres"
+	"context" 
+	"database/sql" // Import ini digunakan untuk tipe *sql.DB
 
+	"github.com/gofiber/fiber/v2"
+	"go.mongodb.org/mongo-driver/mongo"
+
+	mw "uas/middleware" // Mengacu pada package middleware
+
+	// Menggunakan satu alias untuk package postgres repository
+	postgresRepo "uas/app/repository/postgres" 
+	achievementRepoMongo "uas/app/repository/mongo"
+	
 	authService "uas/app/service/postgres"
 	studentService "uas/app/service/postgres"
 	achievementService "uas/app/service/mongo"
 )
 
-// RegisterRoutes adalah fungsi utama untuk mendaftarkan semua endpoint di aplikasi Fiber.
-// Ia bertanggung jawab untuk menginisialisasi repository dan service, lalu mendaftarkan routes.
-func RegisterRoutes(app *fiber.App, db *sql.DB, mongoClient *mongo.Client) {
-	api := app.Group("/api/v1")
+// Definisikan struct wrapper yang mengimplementasikan mw.TokenBlacklistChecker
+// Struct ini memegang referensi ke AuthRepository yang memiliki implementasi IsBlacklisted.
+type AuthBlacklistChecker struct {
+	repo postgresRepo.AuthRepository
+}
 
-	// ===== User & Auth =====
-	userRepo := authRepo.NewUserRepository() // ubah jika butuh db
-	userService := authService.NewUserService(userRepo)
-	authRepoInst := authRepo.NewAuthRepository() // ubah jika butuh db
+// Implementasi metode IsBlacklisted dengan signature yang benar.
+func (c *AuthBlacklistChecker) IsBlacklisted(ctx context.Context, jti string) (bool, error) {
+	// Panggil implementasi yang sebenarnya dari repository.
+	return c.repo.IsBlacklisted(ctx, jti)
+}
+// -------------------------------------------------------------------------------------------
+
+func RegisterRoutes(app *fiber.App, db *sql.DB, mongoClient *mongo.Client) {
+
+	api := app.Group("/api/v1")
+	
+	// ===== Repository Initialization =====
+	// 1. Inisialisasi Auth Repository (untuk Blacklist Checker & Auth Service)
+	authRepoInst := postgresRepo.NewAuthRepository()
+	
+	// 2. Inisialisasi Student Repository
+	studentRepoInst := postgresRepo.NewStudentRepository(db) 
+	
+	// ✅ FIX 1: Menghapus argumen 'db' karena compiler mengindikasikan NewUserRepository() 
+	// seharusnya dipanggil tanpa argumen.
+	userRepoInst := postgresRepo.NewUserRepository()
+	
+	// 4. Buat Checker instance yang memegang Repo
+	blacklistCheckerInst := &AuthBlacklistChecker{repo: authRepoInst}
+
+	// Panggil JWTMiddleware dengan instance yang benar
+	jwtMiddleware := mw.JWTMiddleware(blacklistCheckerInst) 
+
+	// ===== Service Initialization =====
+	
+	// FIX 2: Gunakan userRepoInst yang baru diinisialisasi
+	userService := authService.NewUserService(userRepoInst)
+
+	// authService tetap menggunakan AuthRepo untuk fungsi otentikasi/blacklist.
 	authServiceInst := authService.NewAuthService(authRepoInst)
 
-	// ===== Student =====
-	studentRepoInst := studentRepo.NewStudentRepository(db)
+	// Student Service menggunakan Student Repo yang diinisialisasi di atas
 	studentServiceInst := studentService.NewStudentService(studentRepoInst)
 
-	// ===== Achievement (Mongo & Postgres) =====
+	// ===== Achievement =====
 	achievementCollection := mongoClient.Database("uas").Collection("achievements")
 
 	mongoAchievementRepo := achievementRepoMongo.NewMongoAchievementRepository(achievementCollection)
-	postgresAchievementRepo := achievementRepoPostgres.NewPostgreAchievementRepository(db)
+	postgresAchievementRepo := postgresRepo.NewPostgreAchievementRepository(db) // Menggunakan alias postgresRepo
 
-	achievementServiceInst := achievementService.NewAchievementService(mongoAchievementRepo, postgresAchievementRepo)
+	achievementServiceInst := achievementService.NewAchievementService(
+		mongoAchievementRepo,
+		postgresAchievementRepo,
+	)
 
-	// ===== Routes Setup =====
-	SetupUserRoutes(api, userService, authServiceInst)
-	SetupAuthRoutes(api, authServiceInst)
+	// ===== Routes =====
+	SetupUserRoutes(api, userService, authServiceInst, jwtMiddleware)
 
-	// Pendaftaran Student Routes (yang juga menggunakan achievementServiceInst)
-	StudentRoutes(api, authServiceInst, studentServiceInst, achievementServiceInst)
-    
-	// ✅ PENDAFTARAN REPORT & ANALYTICS ROUTES
-	ReportRoutes(api, authServiceInst, achievementServiceInst)
+	SetupAuthRoutes(api, authServiceInst, jwtMiddleware)
+
+	StudentRoutes(api, authServiceInst, studentServiceInst, achievementServiceInst, jwtMiddleware)
+
+	ReportRoutes(api, authServiceInst, achievementServiceInst, jwtMiddleware)
 }

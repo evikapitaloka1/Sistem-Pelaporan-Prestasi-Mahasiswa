@@ -2,17 +2,37 @@ package repository
 
 import (
 	"context"
+	"database/sql" 
+	"sync" // Tambahkan untuk memastikan akses yang aman ke map
+	
 	db "uas/database/postgres"
 	model "uas/app/model/postgres"
+	
 	"errors"
 	"github.com/lib/pq"
 	"github.com/google/uuid"
 )
 
+// ================= IN-MEMORY BLACKLIST STORAGE =================
+// Map untuk menyimpan JTI yang diblacklist (key=jti string, value=true)
+var blacklist map[string]bool 
+var mu sync.RWMutex // Mutex untuk melindungi akses ke map (wajib karena global)
+
+func init() {
+    blacklist = make(map[string]bool)
+}
 // ================= INTERFACE =================
 type AuthRepository interface {
 	GetByUsername(ctx context.Context, username string) (*model.UserData, string, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*model.UserData, error)
+	
+	// 🚫 Hapus: Metode Update telah dihapus
+	
+	// ✅ METODE REVOCATION
+	BlacklistToken(ctx context.Context, jti string) error
+    
+    // ✅ METODE PENCEKALAN
+    IsBlacklisted(ctx context.Context, jti string) (bool, error)
 }
 
 // ================= IMPLEMENTATION =================
@@ -29,13 +49,13 @@ func NewAuthRepository() AuthRepository {
 func (r *authRepo) GetByUsername(ctx context.Context, username string) (*model.UserData, string, error) {
 	query := `
 		SELECT u.id, u.username, u.full_name, r.name AS role_name,
-		       ARRAY(
-		         SELECT p.name
-		         FROM permissions p
-		         JOIN role_permissions rp ON rp.permission_id = p.id
-		         WHERE rp.role_id = u.role_id
-		       ) AS permissions,
-		       u.password_hash
+				ARRAY(
+					SELECT p.name
+					FROM permissions p
+					JOIN role_permissions rp ON rp.permission_id = p.id
+					WHERE rp.role_id = u.role_id
+				) AS permissions,
+				u.password_hash
 		FROM users u
 		JOIN roles r ON u.role_id = r.id
 		WHERE u.username=$1;
@@ -53,7 +73,11 @@ func (r *authRepo) GetByUsername(ctx context.Context, username string) (*model.U
 		&passwordHash,
 	)
 	if err != nil {
-		return nil, "", errors.New("user tidak ditemukan")
+		// Logika standar untuk error: user tidak ditemukan, dll.
+		if errors.Is(err, sql.ErrNoRows) {
+            return nil, "", errors.New("user tidak ditemukan")
+        }
+		return nil, "", errors.New("gagal mengambil user data")
 	}
 
 	return &u, passwordHash, nil
@@ -63,12 +87,12 @@ func (r *authRepo) GetByUsername(ctx context.Context, username string) (*model.U
 func (r *authRepo) GetByID(ctx context.Context, id uuid.UUID) (*model.UserData, error) {
 	query := `
 		SELECT u.id, u.username, u.full_name, r.name AS role_name,
-		       ARRAY(
-		         SELECT p.name
-		         FROM permissions p
-		         JOIN role_permissions rp ON rp.permission_id = p.id
-		         WHERE rp.role_id = u.role_id
-		       ) AS permissions
+				ARRAY(
+					SELECT p.name
+					FROM permissions p
+					JOIN role_permissions rp ON rp.permission_id = p.id
+					WHERE rp.role_id = u.role_id
+				) AS permissions
 		FROM users u
 		JOIN roles r ON u.role_id = r.id
 		WHERE u.id=$1;
@@ -84,8 +108,33 @@ func (r *authRepo) GetByID(ctx context.Context, id uuid.UUID) (*model.UserData, 
 		pq.Array(&u.Permissions),
 	)
 	if err != nil {
-		return nil, errors.New("user tidak ditemukan")
+		if errors.Is(err, sql.ErrNoRows) {
+            return nil, errors.New("user tidak ditemukan")
+        }
+		return nil, errors.New("gagal mengambil user data")
 	}
 
 	return &u, nil
+}
+
+// 🚫 Hapus: Implementasi Update dihapus.
+
+// ✅ Implementasi BlacklistToken (Menggunakan In-Memory Map)
+func (r *authRepo) BlacklistToken(ctx context.Context, jti string) error {
+	mu.Lock()
+	defer mu.Unlock()
+    
+    // Simpan JTI ke map global
+	blacklist[jti] = true
+	return nil 
+}
+
+// ✅ Implementasi IsBlacklisted (Memeriksa In-Memory Map)
+func (r *authRepo) IsBlacklisted(ctx context.Context, jti string) (bool, error) {
+    mu.RLock() // Gunakan RLock untuk read-only access
+    defer mu.RUnlock()
+    
+    // Cek apakah JTI ada di map
+    _, found := blacklist[jti]
+    return found, nil
 }
