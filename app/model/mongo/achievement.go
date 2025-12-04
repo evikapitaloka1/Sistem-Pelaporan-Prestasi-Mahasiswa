@@ -3,7 +3,6 @@ package models
 import (
 	"database/sql"
 	"time"
-
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -22,8 +21,8 @@ type Attachment struct {
 
 // PeriodRequest digunakan untuk rentang waktu di Organization Details (Request).
 type PeriodRequest struct {
-	Start string `json:"start"` // Tangkap sebagai string dari JSON
-	End string `json:"end"` // Tangkap sebagai string dari JSON
+	Start *time.Time `json:"start" bson:"start"`
+    End *time.Time `json:"end" bson:"end"`
 }
 
 // DynamicDetailsRequest digunakan untuk UNMARSHAL JSON INPUT dari client.
@@ -72,49 +71,48 @@ type AchievementRequest struct {
 }
 
 // 💾 STRUCT DATABASE MONGODB 💾
-
-// Period digunakan untuk rentang waktu dalam Organization Details (DB).
-// Tetap time.Time untuk MongoDB.
+// models.Period sudah benar
 type Period struct {
-	Start time.Time `json:"start" bson:"start"`
-	End time.Time `json:"end" bson:"end"`
+    Start *time.Time `json:"start" bson:"start"` // Ini sudah perbaikan
+    End  *time.Time `json:"end" bson:"end"`
 }
-
 // DynamicDetails menampung semua field dinamis (DB Model).
 // Semua field tanggal adalah time.Time untuk BSON/MongoDB.
 type DynamicDetails struct {
-	// Competition
-	CompetitionName string `json:"competitionName,omitempty" bson:"competitionName,omitempty"`
-	CompetitionLevel string `json:"competitionLevel,omitempty" bson:"competitionLevel,omitempty"`
-	Rank int `json:"rank,omitempty" bson:"rank,omitempty"`
-	MedalType string `json:"medalType,omitempty" bson:"medalType,omitempty"`
-	// Publication
-	PublicationType string `json:"publicationType,omitempty" bson:"publicationType,omitempty"`
-	PublicationTitle string `json:"publicationTitle,omitempty" bson:"publicationTitle,omitempty"`
-	Authors []string `json:"authors,omitempty" bson:"authors,omitempty"`
-	Publisher string `json:"publisher,omitempty" bson:"publisher,omitempty"`
-	ISSN string `json:"issn,omitempty" bson:"issn,omitempty"`
-	// Organization
-	OrganizationName string `json:"organizationName,omitempty" bson:"organizationName,omitempty"`
-	Position string `json:"position,omitempty" bson:"position,omitempty"`
-	Period Period `json:"period,omitempty" bson:"period,omitempty"`
-	// Certification
-	CertificationName string `json:"certificationName,omitempty" bson:"certificationName,omitempty"`
-	IssuedBy string `json:"issuedBy,omitempty" bson:"issuedBy,omitempty"`
-	CertificationNumber string `json:"certificationNumber,omitempty" bson:"certificationNumber,omitempty"`
-	ValidUntil time.Time `json:"validUntil,omitempty" bson:"validUntil,omitempty"`
-	// Common Fields
-	EventDate time.Time `json:"eventDate,omitempty" bson:"eventDate,omitempty"`
-	Location string `json:"location,omitempty" bson:"location,omitempty"`
-	Organizer string `json:"organizer,omitempty" bson:"organizer,omitempty"`
-	Score float64 `json:"score,omitempty" bson:"score,omitempty"`
-	CustomFields primitive.M `json:"customFields,omitempty" bson:"customFields,omitempty"`
+    // Competition
+    CompetitionName string `json:"competitionName,omitempty" bson:"competitionName,omitempty"`
+    CompetitionLevel string `json:"competitionLevel,omitempty" bson:"competitionLevel,omitempty"`
+    Rank int `json:"rank,omitempty" bson:"rank,omitempty"`
+    MedalType string `json:"medalType,omitempty" bson:"medalType,omitempty"`
+    // Publication
+    PublicationType string `json:"publicationType,omitempty" bson:"publicationType,omitempty"`
+    PublicationTitle string `json:"publicationTitle,omitempty" bson:"publicationTitle,omitempty"`
+    Authors []string `json:"authors,omitempty" bson:"authors,omitempty"`
+    Publisher string `json:"publisher,omitempty" bson:"publisher,omitempty"`
+    ISSN string `json:"issn,omitempty" bson:"issn,omitempty"`
+    // Organization
+    OrganizationName string `json:"organizationName,omitempty" bson:"organizationName,omitempty"`
+    Position string `json:"position,omitempty" bson:"position,omitempty"`
+    Period Period `json:"period,omitempty" bson:"period,omitempty"`
+    // Certification
+    CertificationName string `json:"certificationName,omitempty" bson:"certificationName,omitempty"`
+    IssuedBy string `json:"issuedBy,omitempty" bson:"issuedBy,omitempty"`
+    CertificationNumber string `json:"certificationNumber,omitempty" bson:"certificationNumber,omitempty"`
+    ValidUntil *time.Time `json:"validUntil,omitempty" bson:"validUntil,omitempty"` // pointer
+    // Common Fields
+    EventDate *time.Time `json:"eventDate,omitempty" bson:"eventDate,omitempty"`       // pointer
+    Location string `json:"location,omitempty" bson:"location,omitempty"`
+    Organizer string `json:"organizer,omitempty" bson:"organizer,omitempty"`
+    Score float64 `json:"score,omitempty" bson:"score,omitempty"`
+    CustomFields primitive.M `json:"customFields,omitempty" bson:"customFields,omitempty"`
 }
+
 
 // Achievement adalah model utama untuk dokumen prestasi di MongoDB.
 type Achievement struct {
 	ID primitive.ObjectID `json:"id,omitempty" bson:"_id,omitempty"`
-	StudentUUID string `json:"studentId" bson:"studentId"` // Ref ke students.id
+	// Di models.Achievement:
+	StudentID uuid.UUID `json:"studentId" bson:"studentId"`
 	AchievementType string `json:"achievementType" bson:"achievementType"`
 	Title string `json:"title" bson:"title"`
 	Description string `json:"description" bson:"description"`
@@ -173,3 +171,5 @@ type RejectRequest struct {
     // Tag JSON harus SAMA PERSIS dengan key yang dikirim di Postman (rejection_note)
     RejectionNote string `json:"rejection_note"` 
 }
+// db/model/achievement.go (Tambahkan di file ini)
+

@@ -66,8 +66,8 @@ func (r *mongoAchievementRepo) Create(ctx context.Context, achievement *models.A
 
 func (r *mongoAchievementRepo) GetByID(ctx context.Context, id primitive.ObjectID) (*models.Achievement, error) {
 	var achievement models.Achievement
-    // Filter untuk soft delete dan mencoba mengabaikan data lama yang rusak (string kosong)
-    // NOTE: Filter ini bergantung pada bagaimana data rusak tersimpan. Mengandalkan *time.Time di Model sudah jadi langkah terbaik.
+	
+	// Filter untuk soft delete dan mencoba mengabaikan data lama yang rusak (string kosong)
 	filter := bson.M{"_id": id, "deletedAt": nil} 
 	
 	err := r.collection.FindOne(ctx, filter).Decode(&achievement)
@@ -75,14 +75,15 @@ func (r *mongoAchievementRepo) GetByID(ctx context.Context, id primitive.ObjectI
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, errors.New("achievement not found or already deleted in MongoDB")
 		}
-		// Jika error decoding terjadi, kemungkinan data lama memiliki string kosong.
-		return nil, fmt.Errorf("mongo find failed: %w", err)
+		// 🎯 PERBAIKAN: Jika error decoding terjadi (termasuk masalah parsing time), catat dengan jelas.
+		// Penggunaan NullableTime di model seharusnya mengatasi ini, tapi kita pastikan error tetap di-wrap.
+		return nil, fmt.Errorf("mongo find failed: error decoding document for ID %s: %w", id.Hex(), err)
 	}
 	return &achievement, nil
 }
 
 func (r *mongoAchievementRepo) GetByIDs(ctx context.Context, ids []primitive.ObjectID) ([]models.Achievement, error) {
-    // Filter untuk soft delete
+	// Filter untuk soft delete
 	filter := bson.M{"_id": bson.M{"$in": ids}, "deletedAt": nil} 
 	cursor, err := r.collection.Find(ctx, filter)
 	if err != nil {
@@ -91,12 +92,15 @@ func (r *mongoAchievementRepo) GetByIDs(ctx context.Context, ids []primitive.Obj
 	defer cursor.Close(ctx)
 
 	var achievements []models.Achievement
+	// 🎯 PERBAIKAN: Error ini adalah error Time Decoding. Fix ada di Model (NullableTime).
+	// Di sini, kita hanya memastikan kita menangkap error tersebut dengan pesan yang lebih informatif.
 	if err := cursor.All(ctx, &achievements); err != nil {
-        // Error ini adalah error Time Decoding. Fix ada di Model (*time.Time)
-		return nil, fmt.Errorf("mongo cursor decode failed: %w", err)
+		// Jika NullableTime gagal, error akan muncul di sini.
+		return nil, fmt.Errorf("mongo cursor decode failed while fetching multiple documents: %w", err)
 	}
 	return achievements, nil
 }
+
 
 func (r *mongoAchievementRepo) UpdateByID(ctx context.Context, id primitive.ObjectID, updateData bson.M) error {
 	// Pastikan field deletedAt tidak diubah

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
+	
 	"github.com/google/uuid"
 	models "uas/app/model/postgres" // Menggunakan package model Anda
 )
@@ -17,6 +17,7 @@ type StudentRepository interface {
 	GetAll(ctx context.Context) ([]models.Student, error)
 	Create(ctx context.Context, student *models.Student) error
 	UpdateAdvisor(ctx context.Context, studentID uuid.UUID, newAdvisorID uuid.UUID) error // Untuk PUT /students/:id/advisor
+	FindStudentByUserID(ctx context.Context, userID uuid.UUID) (*models.Student, error)
 }
 
 type studentRepo struct {
@@ -92,4 +93,49 @@ func (r *studentRepo) UpdateAdvisor(ctx context.Context, studentID uuid.UUID, ne
 		return errors.New("student ID not found")
 	}
 	return nil
+}
+// repository/student_repo.go (Implementasi)
+
+// repository/student_repo.go (FindStudentByUserID - VERSI DIPERBAIKI)
+
+// repository/student_repo.go (FindStudentByUserID - FIXED)
+
+func (r *studentRepo) FindStudentByUserID(ctx context.Context, userID uuid.UUID) (*models.Student, error) {
+
+    query := `
+        SELECT 
+            id, 
+            user_id, 
+            student_id, 
+            program_study, 
+            academic_year, 
+            advisor_id, 
+            created_at  -- kolom baru ditambahkan dengan komentar SQL YANG BENAR
+        FROM 
+            students
+        WHERE 
+            user_id = $1
+        LIMIT 1;
+    `
+
+    var s models.Student
+
+    err := r.db.QueryRowContext(ctx, query, userID).Scan(
+        &s.ID,
+        &s.UserID,
+        &s.StudentID,
+        &s.ProgramStudy,
+        &s.AcademicYear,
+        &s.AdvisorID,
+        &s.CreatedAt,
+    )
+
+    if err != nil {
+        if errors.Is(err, sql.ErrNoRows) {
+            return nil, errors.New("student not found for the given user ID")
+        }
+        return nil, err
+    }
+
+    return &s, nil
 }

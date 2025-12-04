@@ -140,7 +140,7 @@ func (s *AchievementServiceImpl) CreateAchievement(ctx context.Context, userID u
 	// 3. Prepare & Simpan ke MongoDB (Detail Prestasi)
 	mongoDoc := models.Achievement{
 		// ✅ PENGGUNAAN 1: MENGISI STRUCT MONGODB
-		StudentUUID: finalStudentID.String(), 
+		StudentID: finalStudentID, 
 		AchievementType: req.AchievementType,
 		Title: req.Title,
 		Description: req.Description,
@@ -148,7 +148,7 @@ func (s *AchievementServiceImpl) CreateAchievement(ctx context.Context, userID u
 		Points: req.Points,
 		
 		Details: models.DynamicDetails{
-			EventDate: eventTime, // Asumsi ini sudah menggunakan pointer jika perlu
+			EventDate: &eventTime, // Asumsi ini sudah menggunakan pointer jika perlu
 			Location: req.Details.Location,
 			Organizer: req.Details.Organizer,
 			Score: req.Details.Score,

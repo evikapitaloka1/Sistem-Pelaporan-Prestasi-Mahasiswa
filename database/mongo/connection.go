@@ -1,51 +1,58 @@
-package mongodb
+package mongo
 
 import (
 	"context"
 	"log"
-	"os" // Tambahkan os untuk membaca ENV
+	"reflect"
 	"time"
-
+	"uas/app/codec"
+	"github.com/google/uuid"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// Client menyimpan koneksi MongoDB global
-var Client *mongo.Client
+var client *mongo.Client
 
-// Connect menginisialisasi koneksi MongoDB
+// Connect — koneksi mongodb + registry custom UUID Codec
 func Connect() {
-	// 1. Ambil URI dari Variabel Lingkungan
-	mongoURI := os.Getenv("MONGO_URI") 
-	if mongoURI == "" {
-		log.Fatal("FATAL: MONGO_URI environment variable not set. Please define it in your .env file.")
-	}
-	
+	// 1. Registry untuk UUID Codec
+	rb := bson.NewRegistryBuilder()
+
+	uuidCodec := &codec.UUIDCodec{}
+	rb.RegisterTypeEncoder(reflect.TypeOf(uuid.UUID{}), uuidCodec)
+	rb.RegisterTypeDecoder(reflect.TypeOf(uuid.UUID{}), uuidCodec)
+
+	registry := rb.Build()
+
+	// 2. Setup connection
+	clientOptions := options.Client().
+		ApplyURI("mongodb://localhost:27017").
+		SetRegistry(registry)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	var err error
-	// 2. Gunakan URI dari ENV
-	Client, err = mongo.Connect(ctx, options.Client().ApplyURI(mongoURI)) 
+	client, err = mongo.Connect(ctx, clientOptions)
 	if err != nil {
-		log.Fatal("MongoDB connection failed:", err)
+		log.Fatalf("Mongo connection error: %v", err)
 	}
 
-	// Ping untuk memastikan koneksi berhasil
-	err = Client.Ping(ctx, nil)
-	if err != nil {
-		log.Fatal("MongoDB ping failed:", err)
+	// Test ping
+	if err := client.Ping(ctx, nil); err != nil {
+		log.Fatalf("Mongo ping failed: %v", err)
 	}
 
-	log.Println("MongoDB berhasil connect")
+	log.Println("MongoDB connected with UUID codec.")
 }
 
-// GetClient mengembalikan *mongo.Client yang sudah terkoneksi
+// GetClient — ambil instance *mongo.Client
 func GetClient() *mongo.Client {
-	return Client
+	return client
 }
 
-// GetCollection mengembalikan *mongo.Collection dari nama database & collection
+// GetCollection — ambil collection
 func GetCollection(dbName, collName string) *mongo.Collection {
-	return Client.Database(dbName).Collection(collName)
+	return client.Database(dbName).Collection(collName)
 }

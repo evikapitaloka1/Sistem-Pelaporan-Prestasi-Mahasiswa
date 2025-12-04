@@ -19,9 +19,10 @@ type Attachment struct {
 }
 
 // Period digunakan untuk rentang waktu dalam Organization Details.
+// Seharusnya menggunakan pointer atau tipe kustom (NullableTime)
 type Period struct {
-    Start time.Time `json:"start" bson:"start"`
-    End time.Time `json:"end" bson:"end"`
+    Start *time.Time `json:"start" bson:"start"`
+    End *time.Time `json:"end" bson:"end"`
 }
 
 // DynamicDetails menampung semua field dinamis.
@@ -45,9 +46,8 @@ type DynamicDetails struct {
     CertificationName string `json:"certificationName,omitempty" bson:"certificationName,omitempty"`
     IssuedBy string `json:"issuedBy,omitempty" bson:"issuedBy,omitempty"`
     CertificationNumber string `json:"certificationNumber,omitempty" bson:"certificationNumber,omitempty"`
-    ValidUntil time.Time `json:"validUntil,omitempty" bson:"validUntil,omitempty"`
-    // Common Fields
-    EventDate time.Time `json:"eventDate,omitempty" bson:"eventDate,omitempty"`
+    ValidUntil *time.Time `json:"validUntil,omitempty" bson:"validUntil,omitempty"`
+   EventDate *time.Time `json:"eventDate,omitempty" bson:"eventDate,omitempty"`
     Location string `json:"location,omitempty" bson:"location,omitempty"`
     Organizer string `json:"organizer,omitempty" bson:"organizer,omitempty"`
     Score float64 `json:"score,omitempty" bson:"score,omitempty"`
@@ -57,7 +57,7 @@ type DynamicDetails struct {
 // Achievement adalah model utama untuk dokumen prestasi di MongoDB.
 type Achievement struct {
     ID primitive.ObjectID `json:"id,omitempty" bson:"_id,omitempty"`
-    StudentUUID string `json:"studentId" bson:"studentId"` // Ref ke students.id
+    StudentUUID uuid.UUID `json:"studentId" bson:"studentId"`    
     AchievementType string `json:"achievementType" bson:"achievementType"`
     Title string `json:"title" bson:"title"`
     Description string `json:"description" bson:"description"`

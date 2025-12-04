@@ -1,13 +1,12 @@
 package routes
 
 import (
-	"errors"
-	"net/http"
-	"time" 
-	"fmt" 
 	"context"
+	"net/http"
+	"fmt"   
+    "time"
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid" 
+	"github.com/google/uuid"
 
 	// Service Interface untuk RBAC & Achievement
 	achievementService "uas/app/service/mongo"
@@ -20,57 +19,29 @@ import (
 	mw "uas/middleware"
 )
 
-// =========================================================================
-// ✅ FIX UTAMA: Implementasi NoopBlacklistChecker untuk JWTMiddleware
-// Ini harus didefinisikan di level package, di luar fungsi AchievementRoutes.
-// =========================================================================
+// --- STRUCT LOKAL PENGGANTI yang Dihapus/Disederhanakan ---
+// AchievementUpdateRequest (Dihapus, diganti dengan models.AchievementRequest)
+
+// VerificationRequest dibuat sederhana untuk Verifikasi (Hanya jika models.go tidak punya)
+// Catatan: Jika models.RejectRequest hanya berisi RejectionNote, maka VerificationRequest tidak dibutuhkan.
 
 // Definisikan tipe yang akan mengimplementasikan Blacklist Checker
 type NoopBlacklistChecker struct{}
 
-// Asumsi interface TokenBlacklistChecker di package mw memiliki method ini.
-// Method ini selalu mengembalikan false (tidak ada token yang diblacklist).
 func (n *NoopBlacklistChecker) IsBlacklisted(ctx context.Context, jti string) (bool, error) {
-    // Karena ini adalah Noop (No-operation), kita selalu mengembalikan:
-    // 1. false (token TIDAK diblacklist)
-    // 2. nil (tidak ada error saat pengecekan)
-    return false, nil 
+	return false, nil
 }
-// =========================================================================
-
-// Helper function to safely get UUID from fiber context locals (TETAP UUID UNTUK USER ID)
-func getUserID(c *fiber.Ctx) (uuid.UUID, error) {
-	val := c.Locals("userID")
-	
-	id, ok := val.(uuid.UUID)
-	if !ok {
-		return uuid.Nil, errors.New("user ID not found or invalid type (expected uuid.UUID)")
-	}
-	return id, nil
-}
-
-// Helper function to safely get role from fiber context locals
-func getRole(c *fiber.Ctx) (string, error) {
-	val := c.Locals("role")
-	
-	role, ok := val.(string)
-	if !ok || role == "" {
-		return "", errors.New("role not found in context or invalid type")
-	}
-	return role, nil
-}
-
 
 // AchievementRoutes sekarang menerima 2 Service Instance
 func AchievementRoutes(
 	api fiber.Router,
-	authSvc *authService.AuthService, 
+	authSvc *authService.AuthService,
 	achievementSvc achievementService.AchievementService,
 ) {
-	// Inisialisasi Middleware
-	// ✅ PERBAIKAN: Beri argumen TokenBlacklistChecker
-	jwtMiddleware := mw.JWTMiddleware(&NoopBlacklistChecker{}) // <--- BARIS 52 YANG DIPERBAIKI
+	// --- Inisialisasi Middleware ---
+	jwtMiddleware := mw.JWTMiddleware(&NoopBlacklistChecker{})
 
+	// Middleware RBAC untuk setiap Permission
 	rbacCreate := mw.RBACMiddleware("achievement:create", authSvc)
 	rbacUpdate := mw.RBACMiddleware("achievement:update", authSvc)
 	rbacDelete := mw.RBACMiddleware("achievement:delete", authSvc)
@@ -80,299 +51,278 @@ func AchievementRoutes(
 	// Group route /achievements dengan JWT
 	achievements := api.Group("/achievements", jwtMiddleware)
 
-	// ----------------------
-	// A. ENDPOINT UMUM (READ/HISTORY)
-	// ----------------------
+	// --- FUNGSI HELPER YANG DIPERBAIKI (Konversi string ke uuid.UUID) ---
+	getUserData := func(c *fiber.Ctx) (uuid.UUID, string, error) {
+		userIDVal := c.Locals("userID")
+
+		// 1. Ambil nilai 'userID' sebagai STRING dari c.Locals
+		userIDStr, ok := userIDVal.(string)
+		if !ok || userIDStr == "" {
+			return uuid.Nil, "", fiber.NewError(http.StatusUnauthorized, "User ID not found in context or invalid type (expected string)")
+		}
+
+		// 2. Konversi STRING ke objek uuid.UUID
+		userID, err := uuid.Parse(userIDStr)
+		if err != nil {
+			// Menangani kasus string yang ada, tetapi bukan format UUID yang valid
+			return uuid.Nil, "", fiber.NewError(http.StatusUnauthorized, "User ID string in context is not a valid UUID format")
+		}
+
+		userRoleVal := c.Locals("role")
+		userRole, okRole := userRoleVal.(string)
+		if !okRole || userRole == "" {
+			return uuid.Nil, "", fiber.NewError(http.StatusUnauthorized, "Role not found in context or invalid type")
+		}
+		return userID, userRole, nil
+	}
+
+	// ------------------------------------------
+	// 1. ENDPOINT UMUM (READ/HISTORY)
+	// ------------------------------------------
+
+	// GET /achievements - List Achievement (Filtered berdasarkan role)
 	achievements.Get("/", rbacView, func(c *fiber.Ctx) error {
-		userID, err := getUserID(c) 
+		userID, userRole, err := getUserData(c)
 		if err != nil {
-			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+			return c.Status(err.(*fiber.Error).Code).JSON(fiber.Map{"error": err.Error()})
 		}
-		
-		role, err := getRole(c)
-		if err != nil {
-			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
-		}
-		
-		result, err := achievementSvc.ListAchievements(c.Context(), role, userID)
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+
+		result, serviceErr := achievementSvc.ListAchievements(c.Context(), userRole, userID)
+		if serviceErr != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": serviceErr.Error()})
 		}
 		return c.JSON(fiber.Map{"status": "success", "data": result})
 	})
 
+	// GET /achievements/:id - Detail Achievement
 	achievements.Get("/:id", rbacView, func(c *fiber.Ctx) error {
-		// ✅ PERBAIKAN: Ambil ID sebagai string (MongoDB ObjectID)
 		achievementID := c.Params("id")
-		
-		// Opsional: Validasi panjang ObjectID jika diperlukan (biasanya 24 karakter heksa)
-		if len(achievementID) != 24 {
-			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid achievement ID format (Expected 24-char ObjectID)"})
-		}
-		
-		userID, err := getUserID(c)
+		userID, userRole, err := getUserData(c)
 		if err != nil {
-			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
-		}
-		
-		role, err := getRole(c)
-		if err != nil {
-			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+			return c.Status(err.(*fiber.Error).Code).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		// ✅ PERBAIKAN: Ganti pemanggilan service dari uuid.UUID ke string
-		// ASUMSI GetAchievementDetail sekarang menerima ID bertipe string
-		result, err := achievementSvc.GetAchievementDetail(c.Context(), achievementID, userID, role)
-		if err != nil {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+		result, serviceErr := achievementSvc.GetAchievementDetail(c.Context(), achievementID, userID, userRole)
+		if serviceErr != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": serviceErr.Error()})
 		}
 		return c.JSON(fiber.Map{"status": "success", "data": result})
 	})
 
+	// GET /achievements/:id/history - Riwayat Verifikasi
 	achievements.Get("/:id/history", rbacView, func(c *fiber.Ctx) error {
-		// 1. Ambil ID Prestasi (MongoDB ObjectID) dari parameter
 		achievementID := c.Params("id")
-		if len(achievementID) != 24 {
-			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid achievement ID format (Expected 24-char ObjectID)"})
+		userID, userRole, err := getUserData(c)
+		if err != nil {
+			return c.Status(err.(*fiber.Error).Code).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		// 2. Ambil User ID dari context (diperlukan untuk otorisasi di service)
-		userID, err := getUserID(c)
-		if err != nil {
-			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
-		}
-		
-		// 3. Ambil Role dari context (diperlukan untuk otorisasi di service)
-		role, err := getRole(c)
-		if err != nil {
-			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+		result, serviceErr := achievementSvc.GetAchievementHistory(c.Context(), achievementID, userID, userRole)
+		if serviceErr != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": serviceErr.Error()})
 		}
 
-		// 4. Panggil Service Layer untuk mengambil riwayat status
-		// ASUMSI: GetAchievementHistory sudah ditambahkan ke AchievementService interface Anda
-		result, err := achievementSvc.GetAchievementHistory(c.Context(), achievementID, userID, role)
-		
-		if err != nil {
-			// Asumsi status 404 jika tidak ditemukan, atau 400/500 untuk error lain
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
-		}
-
-		// 5. Kembalikan data riwayat dalam format JSON
 		return c.JSON(fiber.Map{"status": "success", "data": result})
 	})
 
-	// ----------------------
-	// B. MAHASISWA (CREATE, UPDATE, DELETE)
-	// ----------------------
+	// ------------------------------------------
+	// 2. MAHASISWA (CREATE, UPDATE, DELETE, SUBMIT)
+	// ------------------------------------------
+
+	// POST /achievements - Buat Achievement Baru
 	achievements.Post("/", rbacCreate, func(c *fiber.Ctx) error {
 		var req models.AchievementRequest
 		if err := c.BodyParser(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body", "details": err.Error()})
 		}
-		
-		// 1. Ambil User ID
-		userID, err := getUserID(c)
+
+		userID, userRole, err := getUserData(c)
 		if err != nil {
-			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+			return c.Status(err.(*fiber.Error).Code).JSON(fiber.Map{"error": err.Error()})
 		}
-		
-		// 2. 🛑 TAMBAH: Ambil User Role dari context
-		userRole, errRole := getRole(c)
-		if errRole != nil {
-			// Jika role hilang atau tidak valid, tolak akses
-			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": errRole.Error()})
+
+		result, serviceErr := achievementSvc.CreateAchievement(c.Context(), userID, userRole, req)
+
+		if serviceErr != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": serviceErr.Error()})
 		}
-		
-		// 3. KOREKSI PANGGILAN SERVICE: Tambahkan userRole
-		result, err := achievementSvc.CreateAchievement(c.Context(), userID, userRole, req)
-		
-		if err != nil {
-			// Gunakan 400 Bad Request jika error berasal dari logic bisnis/validasi
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
-		}
-		
+
 		return c.Status(http.StatusCreated).JSON(fiber.Map{"status": "success", "data": result})
 	})
 
+	// PUT /achievements/:id - Update Achievement
 	achievements.Put("/:id", rbacUpdate, func(c *fiber.Ctx) error {
-		// 1. Ambil ID MongoDB dari parameter
 		achievementID := c.Params("id")
-		if len(achievementID) != 24 {
-			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid achievement ID format (Expected 24-char ObjectID)"})
-		}
-		
-		// 2. Ambil User ID dan Role dari context
-		userID, err := getUserID(c)
-		if err != nil {
-			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
-		}
-		
-		userRole, err := getRole(c) 
-		if err != nil {
-			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
-		}
-
-		// 3. Parsing Request Body
+		// MENGGUNAKAN struct DARI models.AchievementRequest
 		var req models.AchievementRequest
 		if err := c.BodyParser(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body", "details": err.Error()})
 		}
 
-		// 4. Panggil Service Layer
-		err = achievementSvc.UpdateAchievement(c.Context(), achievementID, userID, userRole, req)
-		
+		userID, userRole, err := getUserData(c)
 		if err != nil {
-			// Tangani error spesifik dari service (misal: "forbidden", "not found", "status draft required")
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+			return c.Status(err.(*fiber.Error).Code).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		// 5. Sukses
+		// Mengasumsikan service.UpdateAchievement menerima models.AchievementRequest
+		// Tidak perlu mapping karena langsung menggunakan models.AchievementRequest
+		serviceErr := achievementSvc.UpdateAchievement(c.Context(), achievementID, userID, userRole, req)
+
+		if serviceErr != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": serviceErr.Error()})
+		}
+
 		return c.JSON(fiber.Map{"status": "success", "message": "Achievement updated successfully"})
 	})
 
+	// DELETE /achievements/:id - Hapus Achievement
 	achievements.Delete("/:id", rbacDelete, func(c *fiber.Ctx) error {
-		// 1. Ambil ID MongoDB
 		achievementID := c.Params("id")
-		if len(achievementID) != 24 {
-			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid achievement ID format (Expected 24-char ObjectID)"})
-		}
 
-		// 2. Ambil User ID
-		userID, err := getUserID(c)
+		userID, userRole, err := getUserData(c)
 		if err != nil {
-			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
-		}
-		
-		// 3. Ambil User Role
-		userRole, errRole := getRole(c) 
-		if errRole != nil {
-			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": errRole.Error()})
+			return c.Status(err.(*fiber.Error).Code).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		// 4. Panggil Service Layer (Soft Delete)
-		err = achievementSvc.DeleteAchievement(c.Context(), achievementID, userID, userRole) 
-		
-		if err != nil {
-			// Tangani error jika service gagal
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		serviceErr := achievementSvc.DeleteAchievement(c.Context(), achievementID, userID, userRole)
+		if serviceErr != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": serviceErr.Error()})
 		}
 
-		// 5. Sukses
-		return c.JSON(fiber.Map{"status": "success", "message": "Achievement deleted (soft delete)"})
-	}) // Fungsi berakhir di sini
+		return c.SendStatus(http.StatusNoContent)
+	})
 
-	// Route baru untuk Submit for verification (Mahasiswa)
-	achievements.Post("/:id/submit", rbacUpdate, func(c *fiber.Ctx) error { // ✅ Tambahkan rbacUpdate jika hanya mahasiswa yang bisa submit
+	// POST /achievements/:id/submit - Mengajukan Achievement untuk Verifikasi
+	achievements.Post("/:id/submit", rbacUpdate, func(c *fiber.Ctx) error {
 		achievementID := c.Params("id")
-		if len(achievementID) != 24 {
-			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid achievement ID format"})
-		}
-		
-		// Ambil User ID (Mahasiswa)
-		userID, err := getUserID(c)
-		if err != nil { return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()}) }
 
-		// Panggil Service SubmitForVerification
-		err = achievementSvc.SubmitForVerification(c.Context(), achievementID, userID)
-		
+		userID, _, err := getUserData(c)
 		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+			return c.Status(err.(*fiber.Error).Code).JSON(fiber.Map{"error": err.Error()})
 		}
+
+		serviceErr := achievementSvc.SubmitForVerification(c.Context(), achievementID, userID)
+
+		if serviceErr != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": serviceErr.Error()})
+		}
+
 		return c.JSON(fiber.Map{"status": "success", "message": "Achievement submitted for verification"})
 	})
-	
-	achievements.Post("/:id/attachments", rbacUpdate, func(c *fiber.Ctx) error {
-		// 1. Ambil ID MongoDB
+
+
+	// ------------------------------------------
+	// 3. VERIFIKATOR (VERIFY, REJECT)
+	// ------------------------------------------
+
+	// PUT /achievements/:id/verify - Verifikasi Achievement
+	achievements.Put("/:id/verify", rbacVerify, func(c *fiber.Ctx) error {
 		achievementID := c.Params("id")
-		if len(achievementID) != 24 {
-			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid achievement ID format (Expected 24-char ObjectID)"})
-		}
-		
-		// 2. Ambil User ID
-		userID, err := getUserID(c)
+		// Catatan: Jika service.VerifyAchievement tidak membutuhkan body, 
+		// tidak perlu ada body parser dan struct request lokal.
+
+		userID, _, err := getUserData(c)
 		if err != nil {
-			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
-		}
-		
-		// 3. Ambil File dari Form Data
-		file, err := c.FormFile("file") 
-		if err != nil {
-			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Failed to upload file or file key 'file' missing", "details": err.Error()})
-		}
-		
-		// 4. Membuat URL dan Attachment Metadata
-		fileUrl := fmt.Sprintf("http://storage-server/path/%s/%s", achievementID, file.Filename) 
-		
-		attachment := models.Attachment{ 
-			FileName: file.Filename,
-			FileUrl: fileUrl,
-			FileType: file.Header.Get("Content-Type"),
-			UploadedAt: time.Now(), 
+			return c.Status(err.(*fiber.Error).Code).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		// 5. Panggil Service Layer
-		err = achievementSvc.AddAttachment(c.Context(), achievementID, userID, attachment) 
+		// Want: (context.Context, string, "github.com/google/uuid".UUID)
+		serviceErr := achievementSvc.VerifyAchievement(c.Context(), achievementID, userID)
 
-		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		if serviceErr != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": serviceErr.Error()})
 		}
 
-		// 6. Sukses
-		return c.Status(http.StatusOK).JSON(fiber.Map{
-			"status": "success", 
-			"message": "File attachment added successfully", 
-			"fileUrl": fileUrl,
-		})
-	})
-	
-	// ----------------------
-	// C. DOSEN WALI (VERIFY, REJECT)
-	// ----------------------
-	achievements.Post("/:id/verify", rbacVerify, func(c *fiber.Ctx) error {
-		// ✅ PERBAIKAN: Ambil ID sebagai string (MongoDB ObjectID)
-		achievementID := c.Params("id")
-		if len(achievementID) != 24 {
-			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid achievement ID format (Expected 24-char ObjectID)"})
-		}
-
-		lecturerID, err := getUserID(c)
-		if err != nil {
-			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
-		}
-
-		// ✅ PERBAIKAN: Ganti pemanggilan service dari uuid.UUID ke string
-		err = achievementSvc.VerifyAchievement(c.Context(), achievementID, lecturerID)
-		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
-		}
-		return c.JSON(fiber.Map{"status": "success", "message": "Achievement verified"})
+		return c.JSON(fiber.Map{"status": "success", "message": "Achievement verified successfully"})
 	})
 
-	achievements.Post("/:id/reject", rbacVerify, func(c *fiber.Ctx) error {
-		// ✅ PERBAIKAN: Ambil ID sebagai string (MongoDB ObjectID)
+	// PUT /achievements/:id/reject - Tolak Achievement
+	achievements.Put("/:id/reject", rbacVerify, func(c *fiber.Ctx) error {
 		achievementID := c.Params("id")
-		if len(achievementID) != 24 {
-			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid achievement ID format (Expected 24-char ObjectID)"})
-		}
-
-		lecturerID, err := getUserID(c)
-		if err != nil {
-			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
-		}
-		
-		type rejectReq struct {
-			Note string `json:"note"`
-		}
-		var req rejectReq
+		// Menggunakan models.RejectRequest dari package models
+		var req models.RejectRequest
 		if err := c.BodyParser(&req); err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 		}
 
-		// ✅ PERBAIKAN: Ganti pemanggilan service dari uuid.UUID ke string
-		err = achievementSvc.RejectAchievement(c.Context(), achievementID, lecturerID, req.Note)
-		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		if req.RejectionNote == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Rejection reason (rejection_note) is required"})
 		}
-		return c.JSON(fiber.Map{"status": "success", "message": "Achievement rejected"})
+
+		// userID SUDAH bertipe uuid.UUID karena perubahan di getUserData
+		userID, _, err := getUserData(c)
+		if err != nil {
+			return c.Status(err.(*fiber.Error).Code).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		// Memanggil service.RejectAchievement dengan 4 argumen: (ctx, id, userID, RejectionNote)
+		serviceErr := achievementSvc.RejectAchievement(c.Context(), achievementID, userID, req.RejectionNote)
+
+		if serviceErr != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": serviceErr.Error()})
+		}
+
+		return c.JSON(fiber.Map{"status": "success", "message": "Achievement rejected successfully"})
 	})
+	achievements.Post("/:id/attachments", func(c *fiber.Ctx) error {
+    achievementID := c.Params("id")
+
+    // Ambil userID dan role dari JWT
+    userIDRaw := c.Locals("userID")
+    if userIDRaw == nil {
+        return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+            "error": "User ID missing from token",
+        })
+    }
+
+    userID, err := uuid.Parse(fmt.Sprint(userIDRaw))
+    if err != nil {
+        return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+            "error": "Invalid userID from token",
+        })
+    }
+
+    // Ambil file dari form-data
+    file, err := c.FormFile("file")
+    if err != nil {
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+            "error": "file wajib diupload",
+        })
+    }
+
+    // Baca file
+    fileSrc, err := file.Open()
+    if err != nil {
+        return c.Status(500).JSON(fiber.Map{
+            "error": "gagal membuka file",
+        })
+    }
+    defer fileSrc.Close()
+
+    // Baca bytes
+    fileUrl := fmt.Sprintf("/uploads/achievements/%s/%s", achievementID, file.Filename)
+
+    // Buat struct Attachment
+     attachment := models.Attachment{
+        FileName:   file.Filename,
+        FileType:   file.Header.Get("Content-Type"),
+        FileUrl:    fileUrl,
+        UploadedAt: time.Now(),
+    }
+
+    // Panggil service
+    err = achievementSvc.AddAttachment(c.Context(), achievementID, userID, attachment)
+    if err != nil {
+        return c.Status(400).JSON(fiber.Map{
+            "error": err.Error(),
+        })
+    }
+
+    return c.JSON(fiber.Map{
+        "status": "success",
+        "message": "attachment berhasil ditambahkan",
+    })
+})
+
+
 }

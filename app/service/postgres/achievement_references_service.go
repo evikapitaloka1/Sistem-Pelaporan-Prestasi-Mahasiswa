@@ -133,7 +133,7 @@ func (s *AchievementServiceImpl) CreateAchievement(ctx context.Context, userID u
 
 	// 2. Prepare & Simpan ke MongoDB (Detail Prestasi)
 	mongoDoc := models.Achievement{
-		StudentUUID: finalStudentID.String(),
+		StudentID: finalStudentID,
 		AchievementType: req.AchievementType,
 		Title: req.Title,
 		Description: req.Description,
@@ -142,8 +142,7 @@ func (s *AchievementServiceImpl) CreateAchievement(ctx context.Context, userID u
 		
 		Details: models.DynamicDetails{
 			// ✅ FIX 1: Menggunakan operator alamat (&) untuk *time.Time
-			EventDate: eventTime, 
-			
+			EventDate: &eventTime, 
 			Location: req.Details.Location,
 			Organizer: req.Details.Organizer,
 			Score: req.Details.Score,
