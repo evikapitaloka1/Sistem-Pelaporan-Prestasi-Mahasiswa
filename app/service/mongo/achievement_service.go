@@ -15,9 +15,6 @@ import (
     repository "uas/app/repository/mongo" // Asumsikan Anda memiliki interface untuk Repo Postgre dan Mongo
 )
 
-// CATATAN: Definisi UserRepository telah dihapus sesuai permintaan.
-
-
 // =========================================================
 // ACHIEVEMENT SERVICE INTERFACE (CONTRACT)
 // =========================================================
@@ -48,7 +45,6 @@ type AchievementService interface {
 type AchievementServiceImpl struct {
 	MongoRepo repository.MongoAchievementRepository
 	PostgreRepo repository.PostgreAchievementRepository
-    // PERBAIKAN: Field UserRepo dihapus sesuai permintaan
 }
 
 // PERBAIKAN: NewAchievementService tidak lagi menerima UserRepo
@@ -544,18 +540,70 @@ func (s *AchievementServiceImpl) ListAchievements(ctx context.Context, userRole 
 }
 
 func (s *AchievementServiceImpl) GetAchievementStatistics(ctx context.Context, userRole string, userID uuid.UUID) (interface{}, error) {
+    // --- 0. Role determination and ID collection ---
 	role := strings.ToLower(userRole)
-	if role != "admin" {
-		// Batasan akses: hanya Admin untuk statistik global
-		return nil, errors.New("forbidden: hanya Admin yang dapat mengakses statistik global")
-	}
+    isGlobalAdmin := (role == "admin")
+    var targetStudentIDs []uuid.UUID
+    
+    switch role {
+    case "admin":
+        targetStudentIDs = nil // Admin reads all data
+    case "mahasiswa":
+        // Mahasiswa (own)
+        studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
+        if err != nil { 
+            return nil, errors.New("forbidden: user is not a registered student") 
+        }
+        targetStudentIDs = []uuid.UUID{studentID}
+    case "dosen wali":
+        // Dosen Wali (advisee)
+        lecturerProfileID, err := s.PostgreRepo.GetLecturerProfileID(ctx, userID)
+        if err != nil { 
+            return nil, errors.New("forbidden: user is not a registered lecturer") 
+        }
+        adviseeIDs, err := s.PostgreRepo.GetAdviseeIDs(ctx, lecturerProfileID)
+        if err != nil { 
+            return nil, fmt.Errorf("failed to get advisee IDs: %w", err) 
+        }
+        targetStudentIDs = adviseeIDs
+    default:
+        return nil, errors.New("forbidden: role cannot access statistics")
+    }
+
+
 
 	// --- 1. Ambil Data Operasional dari PostgreSQL (Status Submissions) ---
-	// Asumsi PostgreRepo.GetAllReferences mengembalikan semua data reference untuk menghitung status
 	pqRefs, err := s.PostgreRepo.GetAllReferences(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("gagal mengambil referensi prestasi dari postgre: %w", err)
 	}
+
+    // FILTERING PQREFS: Apply role-based filter
+    filteredRefs := make([]models.AchievementReference, 0)
+    
+    // Convert targetStudentIDs to map for quick lookup if not Admin
+    targetIDMap := make(map[uuid.UUID]bool)
+    if !isGlobalAdmin {
+        for _, id := range targetStudentIDs {
+            targetIDMap[id] = true
+        }
+    }
+
+    for _, ref := range pqRefs {
+        // 1. Filter Deleted Status
+        if ref.Status == models.StatusDeleted {
+            continue
+        }
+
+        // 2. Apply Role Filter
+        if isGlobalAdmin {
+            filteredRefs = append(filteredRefs, ref)
+        } else {
+            if targetIDMap[ref.StudentID] {
+                filteredRefs = append(filteredRefs, ref)
+            }
+        }
+    }
 
 	statsCounts := map[string]int{
 		string(models.StatusDraft): 0,
@@ -564,99 +612,96 @@ func (s *AchievementServiceImpl) GetAchievementStatistics(ctx context.Context, u
 		string(models.StatusRejected): 0,
 	}
 	
-	// Hitung status pengajuan (total_submissions & status_counts)
-	for _, ref := range pqRefs {
-		if ref.Status == models.StatusDeleted {
-			continue
-		}
+	// Hitung status pengajuan (total_submissions & status_counts) dari filteredRefs
+	for _, ref := range filteredRefs {
 		statusKey := string(ref.Status)
 		if _, found := statsCounts[statusKey]; found {
 			statsCounts[statusKey]++
 		}
 	}
 	
-	totalReferences := len(pqRefs) 
-	
+	totalReferences := len(filteredRefs) // Total submission yang relevan dengan role
+
+
 	// --- 2. Ambil Data Agregasi Prestasi dari MongoDB ---
 	
-	// Total prestasi per tipe
-	statsByType, err := s.MongoRepo.GetStatsByType(ctx) 
-	if err != nil {
-		return nil, fmt.Errorf("gagal mengambil statistik by type: %w", err)
-	}
+    var statsByType []models.StatsByType
+    var statsByPeriod []models.StatsByPeriod
+    var topStudents []models.StatsTopStudent
+    var statsByLevel []models.StatsByLevel
 	
-	// Mengambil data statistik berdasarkan periode (tahun integer dari MongoDB)
-	statsByPeriodRaw, err := s.MongoRepo.GetStatsByYear(ctx) 
-	if err != nil {
-		return nil, fmt.Errorf("gagal mengambil statistik by period: %w", err)
-	}
-    
-    // PERBAIKAN PERIOD: Memastikan period yang tidak valid difilter dan dikonversi
-    statsByPeriod := make([]models.StatsByPeriod, 0, len(statsByPeriodRaw))
-    for _, raw := range statsByPeriodRaw {
-        periodStr := raw.Period
-        
-        // 🛑 ASUMSI PERBAIKAN REPOSITORY/MODEL: Jika 'Period' di struct Anda seharusnya int,
-        // pastikan mappingnya benar. Jika 'Period' string (seperti sekarang), filter nilai non-valid.
-        if periodStr == "" || periodStr == "0" || periodStr == "1970" {
-            // Abaikan atau beri label jika period tidak valid dari MongoDB (misal eventDate null)
-            continue 
-        }
-        
-        // Cek jika period adalah tahun integer, bisa ditambahkan logika untuk konversi ke format yang lebih bagus di sini
-        
-        statsByPeriod = append(statsByPeriod, models.StatsByPeriod{
-            Period: periodStr,
-            Count: raw.Count,
-        })
-    }
-	
-	// Top mahasiswa berprestasi (hanya StudentID dan Count dari MongoDB)
-	topStudents, err := s.MongoRepo.GetTopStudents(ctx) 
-	if err != nil {
-		return nil, fmt.Errorf("gagal mengambil top students: %w", err)
-	}
-    
-	// Distribusi tingkat kompetisi
-	statsByLevel, err := s.MongoRepo.GetStatsByLevel(ctx) 
-	if err != nil {
-		return nil, fmt.Errorf("gagal mengambil statistik by level: %w", err)
-	}
-	
-	// Total Achievements (Total yang dihitung dari agregasi MongoDB)
-	totalAchievements := 0
-	for _, sbt := range statsByType {
-		totalAchievements += int(sbt.Count)
-	}
+	if isGlobalAdmin {
+        // ADMIN: Fetch global detailed stats from MongoRepo
+        statsByType, err = s.MongoRepo.GetStatsByType(ctx) 
+        if err != nil { return nil, fmt.Errorf("gagal mengambil statistik by type: %w", err) }
+        if statsByType == nil { statsByType = []models.StatsByType{} }
 
-	// --- 3. Finalisasi Top Students (Hanya ID dan Count) ---
-    // PERBAIKAN: Menjamin StudentID diisi, dan StudentName dikosongkan.
-	// PERBAIKAN: Menjamin StudentID diisi dan memfilter ID yang tidak valid.
+        statsByPeriodRaw, err := s.MongoRepo.GetStatsByYear(ctx) 
+        if err != nil { return nil, fmt.Errorf("gagal mengambil statistik by period: %w", err) }
+        statsByPeriod = make([]models.StatsByPeriod, 0, len(statsByPeriodRaw))
+        for _, raw := range statsByPeriodRaw {
+            periodStr := raw.Period
+            if periodStr == "" || periodStr == "0" || periodStr == "1970" { continue }
+            statsByPeriod = append(statsByPeriod, models.StatsByPeriod{Period: periodStr, Count: raw.Count})
+        }
+        if statsByPeriod == nil { statsByPeriod = []models.StatsByPeriod{} }
+        
+        topStudents, err = s.MongoRepo.GetTopStudents(ctx) 
+        if err != nil { return nil, fmt.Errorf("gagal mengambil top students: %w", err) }
+        if topStudents == nil { topStudents = []models.StatsTopStudent{} }
+        
+        statsByLevel, err = s.MongoRepo.GetStatsByLevel(ctx) 
+        if err != nil { return nil, fmt.Errorf("gagal mengambil statistik by level: %w", err) }
+        if statsByLevel == nil { statsByLevel = []models.StatsByLevel{} }
+
+	} else {
+        // NON-ADMIN: Detailed aggregation is unavailable (return empty slices)
+        // Ini memastikan field JSON adalah [] bukan null
+        statsByType = []models.StatsByType{}
+        statsByPeriod = []models.StatsByPeriod{}
+        statsByLevel = []models.StatsByLevel{}
+        
+        // Untuk Top Students, mahasiswa hanya akan melihat dirinya sendiri jika ada achievement
+        if role == "mahasiswa" && statsCounts[string(models.StatusVerified)] > 0 {
+            // Karena kita tidak bisa mendapatkan count per student ID dari Mongo, 
+            // kita bisa membuat satu entri placeholder jika dia memiliki Verified Achievement
+            studentID := targetStudentIDs[0]
+            topStudents = []models.StatsTopStudent{
+                {
+                    StudentID: studentID,
+                    Count: int64(statsCounts[string(models.StatusVerified)]),
+                },
+            }
+        } else {
+            topStudents = []models.StatsTopStudent{}
+        }
+	}
+	
+	// Total Achievements (Hanya hitungan yang Verified dari submission)
+	totalAchievements := statsCounts[string(models.StatusVerified)] 
+	
+	// --- 3. Finalisasi Top Students ---
 	finalTopStudents := make([]models.StatsTopStudent, 0, len(topStudents))
 	for _, ts := range topStudents {
-        // PERBAIKAN: Cek apakah StudentID dari repo valid (tidak kosong)
+        // Filter ID yang tidak valid (default UUID)
         if ts.StudentID.String() != "" && ts.StudentID.String() != "00000000-0000-0000-0000-000000000000" {
-            // Karena model StatsTopStudent hanya berisi StudentID dan Count, kita langsung append.
-            // Tidak perlu set ts.StudentName karena field tersebut sudah dihapus.
             finalTopStudents = append(finalTopStudents, ts) 
         }
 	}
 	
-	
 	// --- 4. Gabungkan Hasil ke AchievementStatisticsResult ---
 
 	result := models.AchievementStatistics{
-		// PERBAIKAN: Mengganti Format ke time.Now() agar sesuai dengan time.Time di struct model
 		LastUpdated: time.Now(), 
 		
-		// Data Postgre
+		// Data Postgre (Filtered)
 		TotalSubmissions: totalReferences, 
 		StatusCounts: statsCounts,
 		
-		// Data Agregasi (MongoDB)
+		// Data Agregasi (Mongo - Global untuk Admin, Filtered/Empty untuk lainnya)
 		TotalAchievements: totalAchievements, 
 		AchievementByType: statsByType,
-		AchievementByPeriod: statsByPeriod, // Menggunakan statsByPeriod yang sudah di-filter
+		AchievementByPeriod: statsByPeriod, 
 		TopStudents: finalTopStudents,
 		CompetitionLevelDistribution: statsByLevel,
 	}
