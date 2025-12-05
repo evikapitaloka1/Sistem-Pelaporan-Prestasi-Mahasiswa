@@ -34,7 +34,10 @@ type MongoAchievementRepository interface {
 	// Attachment
 	AddAttachment(ctx context.Context, achievementID primitive.ObjectID, attachment *models.Attachment) error
 	
-	
+	GetStatsByType(ctx context.Context) ([]models.StatsByType, error)
+    GetStatsByYear(ctx context.Context) ([]models.StatsByYear, error)
+    GetStatsByLevel(ctx context.Context) ([]models.StatsByLevel, error)
+    GetTopStudents(ctx context.Context) ([]models.StatsTopStudents, error)
 }
 
 type mongoAchievementRepo struct {
@@ -47,7 +50,129 @@ func NewMongoAchievementRepository(coll *mongo.Collection) MongoAchievementRepos
 }
 
 // Implementasi MONGODB
+// Di file mongo_achievement_repo.go (atau sejenisnya)
 
+// GetStatsByType mengambil total prestasi per tipe dari MongoDB
+func (r *mongoAchievementRepo) GetStatsByType(ctx context.Context) ([]models.StatsByType, error) {
+	pipeline := []bson.D{
+		// 1. Grouping berdasarkan achievementType
+		{{"$group", bson.D{
+			{"_id", "$achievementType"}, // Field _id akan di-map ke models.StatsByType.Type
+			{"count", bson.D{{"$sum", 1}}},
+		}}},
+		// 2. Sort by count (Optional: agar yang terbanyak di atas)
+		{{"$sort", bson.D{{"count", -1}}}},
+	}
+
+	cursor, err := r.collection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, fmt.Errorf("mongo aggregate stats by type failed: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []models.StatsByType
+	if err := cursor.All(ctx, &results); err != nil {
+		return nil, fmt.Errorf("mongo decode stats by type failed: %w", err)
+	}
+
+	return results, nil
+}
+
+// --- 2. Total prestasi per periode (Tahun EventDate) ---
+func (r *mongoAchievementRepo) GetStatsByYear(ctx context.Context) ([]models.StatsByYear, error) {
+	pipeline := []bson.D{
+		// 1. AddFields: Ekstrak tahun dari EventDate
+		{{"$addFields", bson.D{
+			{"eventYear", bson.D{{"$year", "$details.eventDate"}}},
+		}}},
+		// 2. Grouping berdasarkan tahun yang diekstrak
+		{{"$group", bson.D{
+			{"_id", "$eventYear"}, // Field _id akan di-map ke models.StatsByYear.Year
+			{"count", bson.D{{"$sum", 1}}},
+		}}},
+		// 3. Sort by year (Optional: dari tahun terbaru)
+		{{"$sort", bson.D{{"_id", -1}}}},
+	}
+
+	cursor, err := r.collection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, fmt.Errorf("mongo aggregate stats by year failed: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []models.StatsByYear
+	if err := cursor.All(ctx, &results); err != nil {
+		return nil, fmt.Errorf("mongo decode stats by year failed: %w", err)
+	}
+
+	return results, nil
+}
+
+// --- 3. Distribusi tingkat kompetisi (CompetitionLevel) ---
+func (r *mongoAchievementRepo) GetStatsByLevel(ctx context.Context) ([]models.StatsByLevel, error) {
+	// Catatan: Hanya prestasi yang memiliki details.competitionLevel yang akan terhitung
+	pipeline := []bson.D{
+		// 1. Match: Hanya dokumen yang memiliki competitionLevel (untuk menghilangkan non-kompetisi)
+		{{"$match", bson.D{{"details.competitionLevel", bson.D{{"$exists", true}, {"$ne", nil}}}}}}, 
+		// 2. Grouping berdasarkan competitionLevel
+		{{"$group", bson.D{
+			{"_id", "$details.competitionLevel"}, // Field _id akan di-map ke models.StatsByLevel.Level
+			{"count", bson.D{{"$sum", 1}}},
+		}}},
+		// 3. Sort by count
+		{{"$sort", bson.D{{"count", -1}}}},
+	}
+
+	cursor, err := r.collection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, fmt.Errorf("mongo aggregate stats by level failed: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []models.StatsByLevel
+	if err := cursor.All(ctx, &results); err != nil {
+		return nil, fmt.Errorf("mongo decode stats by level failed: %w", err)
+	}
+
+	return results, nil
+}
+
+// --- 4. Top mahasiswa berprestasi (Top Students) ---
+func (r *mongoAchievementRepo) GetTopStudents(ctx context.Context) ([]models.StatsTopStudents, error) {
+	// Catatan: Agar output ini lengkap (NIM/Nama), Anda perlu me-JOIN dengan data mahasiswa
+	// (misalnya dari PostgreSQL atau service eksternal) setelah agregasi ini.
+	// Di sini kita hanya mengembalikan StudentID (UUID) dan Count.
+
+	pipeline := []bson.D{
+		// 1. Grouping berdasarkan StudentID
+		{{"$group", bson.D{
+			{"_id", "$studentId"}, // Field _id akan di-map ke models.StatsTopStudents.StudentID
+			{"count", bson.D{{"$sum", 1}}},
+		}}},
+		// 2. Sort by count (limit 10 besar)
+		{{"$sort", bson.D{{"count", -1}}}},
+		// 3. Limit (Ambil 10 teratas)
+		{{"$limit", 10}}, 
+	}
+
+	cursor, err := r.collection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, fmt.Errorf("mongo aggregate top students failed: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []models.StatsTopStudents
+	if err := cursor.All(ctx, &results); err != nil {
+		return nil, fmt.Errorf("mongo decode top students failed: %w", err)
+	}
+
+	// WARNING: StudentNIM dan StudentName di struct models.StatsTopStudents tidak akan terisi 
+	// karena data tersebut TIDAK ada di collection prestasi MongoDB. 
+	// Anda harus melengkapi field tersebut di Service Layer (menggunakan StudentID) dengan 
+	// memanggil service data Mahasiswa.
+
+	return results, nil
+}
 func (r *mongoAchievementRepo) Create(ctx context.Context, achievement *models.Achievement) (*primitive.ObjectID, error) {
     if achievement.ID.IsZero() {
         achievement.ID = primitive.NewObjectID()

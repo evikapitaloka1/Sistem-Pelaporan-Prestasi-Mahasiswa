@@ -539,44 +539,95 @@ func (s *AchievementServiceImpl) ListAchievements(ctx context.Context, userRole 
 }
 
 func (s *AchievementServiceImpl) GetAchievementStatistics(ctx context.Context, userRole string, userID uuid.UUID) (interface{}, error) {
-	
-	role := strings.ToLower(userRole)
-	if role != "admin" {
-		return nil, errors.New("forbidden: hanya Admin yang dapat mengakses statistik global")
-	}
+    role := strings.ToLower(userRole)
+    if role != "admin" {
+        // PERBAIKAN: Jika Dosen Wali/Mahasiswa boleh akses statistik 'own'/'advisee', logika ini perlu diubah.
+        // Berdasarkan SRS: Actor: Mahasiswa (own), Dosen Wali (advisee), Admin (all)
+        // Jika request ini hanya untuk 'all' (Admin), maka biarkan. Jika harus bisa semua, ini perlu logic filter data.
+        // ASUMSI SEMENTARA: Admin Global View (akses 'all')
+        return nil, errors.New("forbidden: hanya Admin yang dapat mengakses statistik global")
+    }
 
-	pqRefs, err := s.PostgreRepo.GetAllReferences(ctx)
-	if err != nil { 
-		return nil, fmt.Errorf("gagal mengambil referensi prestasi dari postgre: %w", err) 
-	}
-	
-	stats := map[string]int{
-		string(models.StatusDraft): 0, 
-		string(models.StatusSubmitted): 0,
-		string(models.StatusVerified): 0,
-		string(models.StatusRejected): 0,
-	}
-	
-	for _, ref := range pqRefs {
-		if ref.Status == models.StatusDeleted { 
-			continue
-		}
-		
-		statusKey := string(ref.Status) 
-		
-		if _, found := stats[statusKey]; found {
-			stats[statusKey]++ 
-		}
-	}
-	
-	total := len(pqRefs) 
-	
-	finalStats := map[string]interface{}{
-		"total_references": total,
-		"status_counts": stats, 
-	}
+    // --- 1. Ambil Data Operasional dari PostgreSQL (Status Submissions) ---
+    pqRefs, err := s.PostgreRepo.GetAllReferences(ctx)
+    if err != nil {
+        return nil, fmt.Errorf("gagal mengambil referensi prestasi dari postgre: %w", err)
+    }
 
-	return finalStats, nil
+    statsCounts := map[string]int{
+        string(models.StatusDraft): 0,
+        string(models.StatusSubmitted): 0,
+        string(models.StatusVerified): 0,
+        string(models.StatusRejected): 0,
+    }
+    
+    // Hitung status pengajuan (total_submissions & status_counts)
+    for _, ref := range pqRefs {
+        if ref.Status == models.StatusDeleted {
+            continue
+        }
+        statusKey := string(ref.Status)
+        if _, found := statsCounts[statusKey]; found {
+            statsCounts[statusKey]++
+        }
+    }
+    
+    totalReferences := len(pqRefs) // Total semua referensi (termasuk deleted jika tidak difilter di repo)
+    
+    // --- 2. Ambil Data Agregasi Prestasi dari MongoDB ---
+    
+    // Catatan: Anda perlu repo MongoDB (misalnya, `s.MongoRepo`). Saya asumsikan Anda memilikinya.
+    // Ganti s.PostgreRepo dengan s.MongoRepo di bawah.
+
+    // Total prestasi per tipe
+    statsByType, err := s.MongoRepo.GetStatsByType(ctx) // ASUMSI: GetStatsByType sudah diimplementasikan di MongoRepo
+    if err != nil {
+        return nil, fmt.Errorf("gagal mengambil statistik by type: %w", err)
+    }
+    
+    // Total prestasi per periode (tahun)
+    statsByYear, err := s.MongoRepo.GetStatsByYear(ctx) // ASUMSI: GetStatsByYear sudah diimplementasikan
+    if err != nil {
+        return nil, fmt.Errorf("gagal mengambil statistik by year: %w", err)
+    }
+    
+    // Top mahasiswa berprestasi
+    topStudents, err := s.MongoRepo.GetTopStudents(ctx) // ASUMSI: GetTopStudents sudah diimplementasikan
+    if err != nil {
+        return nil, fmt.Errorf("gagal mengambil top students: %w", err)
+    }
+    
+    // Distribusi tingkat kompetisi
+    statsByLevel, err := s.MongoRepo.GetStatsByLevel(ctx) // ASUMSI: GetStatsByLevel sudah diimplementasikan
+    if err != nil {
+        return nil, fmt.Errorf("gagal mengambil statistik by level: %w", err)
+    }
+    
+    // Total Achievements (Total yang dihitung dari agregasi MongoDB)
+    totalAchievements := 0
+    for _, sbt := range statsByType {
+        totalAchievements += int(sbt.Count)
+    }
+    
+    // --- 3. Gabungkan Hasil ke AchievementStatisticsResult ---
+
+    // Menggunakan struct Result yang sudah Anda buat
+    result := models.AchievementStatisticsResult{
+        LastUpdated: time.Now(),
+        
+        // Data Postgre
+        TotalReferences: totalReferences, // Ini adalah 'Total Submissions' Anda
+        StatusCounts: statsCounts,
+        
+        // Data MongoDB (Agregasi Prestasi Verified)
+        TotalAchievements: totalAchievements, // Hanya hitung prestasi yang Verified (tergantung logic agregasi Anda)
+        AchievementByType: statsByType,
+        AchievementByPeriod: statsByYear,
+        TopStudents: topStudents,
+        CompetitionLevelDistribution: statsByLevel,
+    }
+    
+    return result, nil
 }
 
 func (s *AchievementServiceImpl) AddAttachment(ctx context.Context, mongoAchievementID string, userID uuid.UUID, attachment models.Attachment) error {

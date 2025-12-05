@@ -27,36 +27,58 @@ func ReportRoutes(
 
 	// GET /api/v1/reports/statistics (Hanya untuk Admin)
 	reports.Get("/statistics", rbacAdmin, func(c *fiber.Ctx) error {
-		
-		var userIDStr string
-		userLocals := c.Locals("userID")
-		
-		if str, ok := userLocals.(string); ok {
-			userIDStr = str
-		} else if uid, ok := userLocals.(uuid.UUID); ok {
-			userIDStr = uid.String()
-		}
+    
+    // Gunakan fiber.Ctx untuk Context yang memiliki nilai timeout.
+    ctx := c.Context() 
+    
+    // --- 1. Ekstraksi dan Validasi User ID ---
+    
+    // Karena rbacAdmin sudah dijalankan, asumsi userID dan role sudah ada 
+    // dan role adalah 'admin'. Kita prioritaskan tipe data yang konsisten.
+    userIDStr, ok := c.Locals("userID").(string)
+    userRole, roleOk := c.Locals("role").(string)
 
-		userRole, ok := c.Locals("role").(string)
-		if !ok || userRole == "" || userIDStr == "" {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "User ID or role missing from token"})
-		}
-		
-		parsedUserID, err := uuid.Parse(userIDStr) 
-		if err != nil {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid user ID format in token"})
-		}
+    // Jika middleware Anda menyimpan UUID sebagai uuid.UUID (lebih bersih),
+    // gunakan: parsedUserID, ok := c.Locals("userID").(uuid.UUID)
 
-		result, err := achievementSvc.GetAchievementStatistics(c.Context(), userRole, parsedUserID)
-		if err != nil {
-			status := http.StatusBadRequest
-			if err.Error() == "forbidden: hanya Admin yang dapat mengakses statistik global" {
-				status = http.StatusForbidden
-			}
-			return c.Status(status).JSON(fiber.Map{"error": err.Error()})
-		}
-		return c.JSON(fiber.Map{"status": "success", "data": result})
-	})
+    if !ok || !roleOk || userIDStr == "" || userRole == "" {
+        // Status 401 adalah tepat jika data token hilang di Locals (safety net)
+        return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "User ID or role missing from token"})
+    }
+
+    parsedUserID, err := uuid.Parse(userIDStr) 
+    if err != nil {
+        // Status 401 juga tepat jika format ID di token tidak valid
+        return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid user ID format in token"})
+    }
+
+    // --- 2. Panggil Service untuk mendapatkan semua data statistik ---
+    // Gunakan ctx yang diambil dari c.Context()
+    result, err := achievementSvc.GetAchievementStatistics(ctx, userRole, parsedUserID)
+    
+    if err != nil {
+        // Set default status ke 500 (Internal Server Error)
+        status := fiber.StatusInternalServerError 
+        errorMessage := err.Error()
+
+        // Penanganan spesifik untuk error otorisasi (Forbidden)
+        if strings.Contains(errorMessage, "forbidden") {
+            status = fiber.StatusForbidden // 403
+            errorMessage = "Akses ditolak. Anda tidak memiliki izin untuk melihat statistik ini."
+        }
+        
+        // Penanganan jika ada error validasi di service (optional, umumnya 400)
+        // if strings.Contains(errorMessage, "invalid input") { status = fiber.StatusBadRequest }
+
+        return c.Status(status).JSON(fiber.Map{"error": errorMessage})
+    }
+    
+    // --- 3. Mengembalikan Respons ---
+    return c.Status(fiber.StatusOK).JSON(fiber.Map{
+        "status": "success", 
+        "data": result,
+    })
+})
 
 	// GET /api/v1/reports/student/:id (Dapat diakses oleh Admin, Dosen Wali, Mahasiswa)
 	reports.Get("/student/:id", func(c *fiber.Ctx) error { 
