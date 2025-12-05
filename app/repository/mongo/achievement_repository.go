@@ -49,20 +49,25 @@ func NewMongoAchievementRepository(coll *mongo.Collection) MongoAchievementRepos
 // Implementasi MONGODB
 
 func (r *mongoAchievementRepo) Create(ctx context.Context, achievement *models.Achievement) (*primitive.ObjectID, error) {
-	if achievement.CreatedAt.IsZero() {
-		achievement.CreatedAt = time.Now()
-	}
-	if achievement.UpdatedAt.IsZero() {
-		achievement.UpdatedAt = time.Now()
-	}
+    if achievement.ID.IsZero() {
+        achievement.ID = primitive.NewObjectID()
+    }
+    if achievement.CreatedAt.IsZero() {
+        achievement.CreatedAt = time.Now()
+    }
+    if achievement.UpdatedAt.IsZero() {
+        achievement.UpdatedAt = time.Now()
+    }
 
-	result, err := r.collection.InsertOne(ctx, achievement)
-	if err != nil {
-		return nil, fmt.Errorf("mongo insert failed: %w", err)
-	}
-	id := result.InsertedID.(primitive.ObjectID)
-	return &id, nil
+    result, err := r.collection.InsertOne(ctx, achievement)
+    if err != nil {
+        return nil, fmt.Errorf("mongo insert failed: %w", err)
+    }
+
+    id := result.InsertedID.(primitive.ObjectID)
+    return &id, nil
 }
+
 
 func (r *mongoAchievementRepo) GetByID(ctx context.Context, id primitive.ObjectID) (*models.Achievement, error) {
 	var achievement models.Achievement

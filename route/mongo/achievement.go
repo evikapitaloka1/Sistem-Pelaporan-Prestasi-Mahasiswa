@@ -234,7 +234,7 @@ func AchievementRoutes(
     })
 
     // PUT /achievements/:id/reject - Tolak Achievement (Menggunakan PUT sesuai kode asli)
-    achievements.Put("/:id/reject", rbacVerify, func(c *fiber.Ctx) error {
+    achievements.Post("/:id/reject", rbacVerify, func(c *fiber.Ctx) error {
         achievementID := c.Params("id")
         
         var req models.RejectRequest
