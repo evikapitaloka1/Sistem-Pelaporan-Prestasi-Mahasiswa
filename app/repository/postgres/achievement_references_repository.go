@@ -68,19 +68,22 @@ func (r *mongoAchievementRepo) GetByID(ctx context.Context, id primitive.ObjectI
 }
 
 func (r *mongoAchievementRepo) GetByIDs(ctx context.Context, ids []primitive.ObjectID) ([]models.Achievement, error) {
-	filter := bson.M{"_id": bson.M{"$in": ids}}
-	cursor, err := r.collection.Find(ctx, filter)
-	if err != nil {
-		return nil, fmt.Errorf("mongo find many failed: %w", err)
-	}
-	defer cursor.Close(ctx)
+    // Filter untuk mencari semua ID dalam list, dan memastikan belum di-soft-delete (deletedAt: nil)
+    filter := bson.M{"_id": bson.M{"$in": ids}, "deletedAt": nil} 
+    cursor, err := r.collection.Find(ctx, filter)
+    if err != nil {
+        return nil, fmt.Errorf("mongo find many failed: %w", err)
+    }
+    defer cursor.Close(ctx)
 
-	var achievements []models.Achievement
-	if err := cursor.All(ctx, &achievements); err != nil {
-		return nil, fmt.Errorf("mongo cursor decode failed: %w", err)
-	}
-	return achievements, nil
+    var achievements []models.Achievement
+    // 🛑 KOREKSI: Pastikan tidak ada error decoding yang terjadi di sini
+    if err := cursor.All(ctx, &achievements); err != nil {
+        return nil, fmt.Errorf("mongo cursor decode failed while fetching multiple documents: %w", err)
+    }
+    return achievements, nil
 }
+
 
 func (r *mongoAchievementRepo) UpdateByID(ctx context.Context, id primitive.ObjectID, updateData bson.M) error {
 	updateData["updatedAt"] = time.Now()

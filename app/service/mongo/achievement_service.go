@@ -6,14 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"time"
-	"strings" // ✅ WAJIB: Untuk strings.ToLower()
+	"strings" 
 
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 
-	// Pastikan path import Repository dan Model Anda benar
-	models "uas/app/model/mongo" // Alias models untuk model
-	repository "uas/app/repository/mongo" // Alias repository untuk repo
+	models "uas/app/model/mongo" 
+	repository "uas/app/repository/mongo" 
 )
 
 // =========================================================
@@ -38,17 +37,16 @@ type AchievementService interface {
 	UpdateAchievement(ctx context.Context, id string, userID uuid.UUID, userRole string, req models.AchievementRequest) error
 	GetAchievementHistory(ctx context.Context, id string, userID uuid.UUID, userRole string) ([]models.AchievementReference, error)
 }
+
 // =========================================================
 // ACHIEVEMENT SERVICE IMPLEMENTATION
 // =========================================================
 
-// AchievementServiceImpl memegang instance dari kedua repository
 type AchievementServiceImpl struct {
 	MongoRepo repository.MongoAchievementRepository
 	PostgreRepo repository.PostgreAchievementRepository
 }
 
-// NewAchievementService adalah constructor untuk AchievementServiceImpl
 func NewAchievementService(mRepo repository.MongoAchievementRepository, pRepo repository.PostgreAchievementRepository) AchievementService {
 	return &AchievementServiceImpl{
 		MongoRepo: mRepo,
@@ -57,70 +55,62 @@ func NewAchievementService(mRepo repository.MongoAchievementRepository, pRepo re
 }
 
 // -----------------------------------------------------------
-// Helper Function
+// Helper Function: Pengecekan Akses Dosen Wali
 // -----------------------------------------------------------
-
-// verifyAccessCheck: Memastikan dosen adalah advisor dari mahasiswa pemilik prestasi.
-// uas/app/service/mongo/achievement_service.go (Helper Function)
 
 func (s *AchievementServiceImpl) verifyAccessCheck(ctx context.Context, ref *models.AchievementReference, userIDFromToken uuid.UUID) error {
-    
-    // 🛑 LANGKAH 1: KONVERSI ID TOKEN (users.id) ke ID PROFIL DOSEN (lecturers.id)
-    lecturerProfileID, err := s.PostgreRepo.GetLecturerProfileID(ctx, userIDFromToken)
-    if err != nil {
-        // Jika user ID ada di token tapi tidak ada profil dosen, tolak.
-        return errors.New("gagal mendapatkan profil dosen yang login") 
-    }
+	
+	// LANGKAH 1: KONVERSI ID TOKEN (users.id) ke ID PROFIL DOSEN (lecturers.id)
+	lecturerProfileID, err := s.PostgreRepo.GetLecturerProfileID(ctx, userIDFromToken)
+	if err != nil {
+		// 🛑 Error yang dioptimalkan untuk debugging data
+		return fmt.Errorf("gagal mendapatkan profil dosen yang login (User ID: %s)", userIDFromToken.String()) 
+	}
 
-    // 🛑 LANGKAH 2: Gunakan ID Profil Dosen (lecturers.id) untuk mendapatkan adviseeIDs
-    adviseeIDs, err := s.PostgreRepo.GetAdviseeIDs(ctx, lecturerProfileID) // ✅ Menggunakan ID Profil Dosen
-    if err != nil { 
-        return errors.New("gagal mendapatkan data mahasiswa bimbingan") 
-    }
-    
-    // 3. Pengecekan Kepemilikan Mahasiswa
-    isAdvisee := false
-    // ... (Logika perulangan tetap sama)
-    for _, id := range adviseeIDs {
-        if id == ref.StudentID {
-            isAdvisee = true
-            break
-        }
-    }
-    
-    if !isAdvisee {
-        return errors.New("dosen ini tidak berhak memproses prestasi mahasiswa tersebut")
-    }
-    
-    return nil
+	// LANGKAH 2: Gunakan ID Profil Dosen untuk mendapatkan adviseeIDs
+	adviseeIDs, err := s.PostgreRepo.GetAdviseeIDs(ctx, lecturerProfileID) 
+	if err != nil { 
+		return errors.New("gagal mendapatkan data mahasiswa bimbingan") 
+	}
+	
+	// LANGKAH 3: Pengecekan Kepemilikan Mahasiswa
+	isAdvisee := false
+	for _, id := range adviseeIDs {
+		if id == ref.StudentID {
+			isAdvisee = true
+			break
+		}
+	}
+	
+	if !isAdvisee {
+		return errors.New("dosen ini tidak berhak memproses prestasi mahasiswa tersebut")
+	}
+	
+	return nil
 }
-// -----------------------------------------------------------
-// mahasiswa Operations (FR-003, FR-004, FR-005)
-// -----------------------------------------------------------
 
-// CreateAchievement: Menggunakan Pointer untuk EventDate (Fix Time Decode Error)
-// File: uas/app/service/mongo/achievement_service.go (CreateAchievement)
+// -----------------------------------------------------------
+// Operasi CRUD Mahasiswa/Admin
+// -----------------------------------------------------------
 
 func (s *AchievementServiceImpl) CreateAchievement(ctx context.Context, userID uuid.UUID, userRole string, req models.AchievementRequest) (*models.AchievementDetail, error) {
 	
-	// Deklarasikan variabel di scope fungsi luar
 	var finalStudentID uuid.UUID
 	var err error
 
-	// 1. Tentukan Student ID Target berdasarkan Role
-	role := strings.ToLower(userRole) // Normalisasi
+	role := strings.ToLower(userRole) 
 
 	if role == "admin" {
 		if req.TargetStudentID == "" { 
 			return nil, errors.New("admin harus menyediakan target Student ID")
 		}
 		
-		finalStudentID, err = uuid.Parse(req.TargetStudentID) // Assignment
+		finalStudentID, err = uuid.Parse(req.TargetStudentID) 
 		if err != nil {
 			return nil, errors.New("format target Student ID tidak valid")
 		}
 	} else if role == "mahasiswa" {
-		finalStudentID, err = s.PostgreRepo.GetStudentProfileID(ctx, userID) // Assignment
+		finalStudentID, err = s.PostgreRepo.GetStudentProfileID(ctx, userID) 
 		if err != nil {
 			return nil, errors.New("user is not associated with a student profile")
 		}
@@ -128,18 +118,13 @@ func (s *AchievementServiceImpl) CreateAchievement(ctx context.Context, userID u
 		return nil, errors.New("role tidak memiliki hak untuk membuat prestasi")
 	}
 	
-	// 🛑 KOREKSI LOGIKA BERIKUT INI MENGGUNAKAN finalStudentID YANG SUDAH DISETEL 🛑
-
-	// 2. Parsing EventDate
 	const dateFormat = "2006-01-02" 
 	eventTime, err := time.Parse(dateFormat, req.Details.EventDate)
 	if err != nil {
 		return nil, fmt.Errorf("format eventDate tidak valid. Harap gunakan %s", dateFormat)
 	}
 
-	// 3. Prepare & Simpan ke MongoDB (Detail Prestasi)
 	mongoDoc := models.Achievement{
-		// ✅ PENGGUNAAN 1: MENGISI STRUCT MONGODB
 		StudentID: finalStudentID, 
 		AchievementType: req.AchievementType,
 		Title: req.Title,
@@ -148,7 +133,7 @@ func (s *AchievementServiceImpl) CreateAchievement(ctx context.Context, userID u
 		Points: req.Points,
 		
 		Details: models.DynamicDetails{
-			EventDate: &eventTime, // Asumsi ini sudah menggunakan pointer jika perlu
+			EventDate: &eventTime, 
 			Location: req.Details.Location,
 			Organizer: req.Details.Organizer,
 			Score: req.Details.Score,
@@ -169,10 +154,8 @@ func (s *AchievementServiceImpl) CreateAchievement(ctx context.Context, userID u
 	}
 	mongoID := mongoIDPtr.Hex()
 
-	// 4. Simpan Referensi ke PostgreSQL (Workflow Status)
 	pqRef := models.AchievementReference{
 		ID: uuid.New(),
-		// ✅ PENGGUNAAN 2: MENGISI STRUCT POSTGRESQL
 		StudentID: finalStudentID, 
 		MongoAchievementID: mongoID,
 		Status: models.StatusDraft,
@@ -185,7 +168,6 @@ func (s *AchievementServiceImpl) CreateAchievement(ctx context.Context, userID u
 		return nil, fmt.Errorf("gagal menyimpan referensi ke PostgreSQL: %w", err)
 	}
 
-	// 5. Return Data
 	return &models.AchievementDetail{
 		Achievement: mongoDoc,
 		ReferenceID: pqRef.ID.String(),
@@ -196,52 +178,42 @@ func (s *AchievementServiceImpl) CreateAchievement(ctx context.Context, userID u
 		RejectionNote: "",
 	}, nil
 }
-// SubmitForVerification: Mengubah status 'draft' menjadi 'submitted' (FR-004)
+
 func (s *AchievementServiceImpl) SubmitForVerification(ctx context.Context, mongoAchievementID string, userID uuid.UUID) error {
-	// 1. Ambil Reference (PostgreSQL) berdasarkan MongoDB ID
 	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
 	if err != nil {
 		return err
 	}
 
-	// Precondition 1: Status harus 'draft'
 	if ref.Status != models.StatusDraft {
 		return errors.New("prestasi hanya bisa disubmit jika berstatus 'draft'")
 	}
 	
-	// Precondition 2: Pastikan yang submit adalah pemilik prestasi
 	studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
 	if err != nil { return errors.New("user tidak memiliki profil mahasiswa") }
 	if studentID != ref.StudentID {
 		return errors.New("tidak memiliki hak untuk submit prestasi ini")
 	}
 
-	// Update status di PostgreSQL
-	// Kita menggunakan ref.ID (UUID Postgre) untuk update
-	// FIX: Repository UpdateReferenceStatus sekarang menangani pq: inconsistent types
 	err = s.PostgreRepo.UpdateReferenceStatus(ctx, ref.ID, models.StatusSubmitted, sql.NullString{}, sql.NullString{})
 	if err != nil {
 		return fmt.Errorf("gagal update status menjadi submitted: %w", err)
 	}
-	
+    
 	return nil
 }
 
-// DeleteAchievement: Implementasi Soft Delete dengan Normalisasi Role
 func (s *AchievementServiceImpl) DeleteAchievement(
 	ctx context.Context, 
 	mongoAchievementID string, 
 	userID uuid.UUID, 
 	userRole string, 
 ) error {
-	// 🛑 KOREKSI: Normalisasi userRole
 	role := strings.ToLower(userRole) 
 	
-	// 1. Dapatkan Reference
 	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
 	if err != nil { return err }
 
-	// 2. LOGIKA VALIDASI DAN BYPASS ADMIN
 	if role != "admin" {
 		if ref.Status != models.StatusDraft {
 			return errors.New("prestasi hanya bisa dihapus jika berstatus 'draft'")
@@ -255,7 +227,6 @@ func (s *AchievementServiceImpl) DeleteAchievement(
 		}
 	} 
 
-	// 3. LAKUKAN SOFT DELETE
 	mongoID, err := primitive.ObjectIDFromHex(mongoAchievementID)
 	if err != nil { return errors.New("ID MongoDB tidak valid") }
 	
@@ -263,7 +234,6 @@ func (s *AchievementServiceImpl) DeleteAchievement(
 		return fmt.Errorf("gagal soft delete di MongoDB: %w", err)
 	}
 
-	// Update Status di PostgreSQL menjadi 'deleted'
 	if err := s.PostgreRepo.UpdateReferenceForDelete(ctx, ref.ID, models.StatusDeleted); err != nil {
 		return fmt.Errorf("gagal update status referensi di PostgreSQL menjadi 'deleted': %w", err)
 	}
@@ -271,7 +241,6 @@ func (s *AchievementServiceImpl) DeleteAchievement(
 	return nil
 }
 
-// UpdateAchievement: Implementasi Update dengan Normalisasi Role
 func (s *AchievementServiceImpl) UpdateAchievement(
 	ctx context.Context, 
 	mongoAchievementID string, 
@@ -280,14 +249,11 @@ func (s *AchievementServiceImpl) UpdateAchievement(
 	req models.AchievementRequest,
 ) error {
 	
-	// 🛑 KOREKSI: Normalisasi userRole
 	role := strings.ToLower(userRole) 
 
-	// 1. Dapatkan Reference (Postgre) untuk cek status dan pemilik
 	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
 	if err != nil { return errors.New("prestasi tidak ditemukan atau ID tidak valid") }
 	
-	// 2. LOGIKA VALIDASI
 	canUpdate := false 
 	
 	if role == "admin" {
@@ -306,11 +272,9 @@ func (s *AchievementServiceImpl) UpdateAchievement(
 		return errors.New("forbidden: tidak memiliki hak untuk mengupdate prestasi ini")
 	}
 
-	// 3. UPDATE DATABASE
 	mongoID, err := primitive.ObjectIDFromHex(mongoAchievementID)
 	if err != nil { return errors.New("ID MongoDB tidak valid") }
 	
-	// Siapkan Data Update
 	updateData := primitive.M{
 		"title": req.Title,
 		"description": req.Description,
@@ -321,7 +285,6 @@ func (s *AchievementServiceImpl) UpdateAchievement(
 		"updated_at": time.Now(), 
 	}
 	
-	// Panggil Mongo Repository
 	if err := s.MongoRepo.UpdateByID(ctx, mongoID, updateData); err != nil {
 		return fmt.Errorf("gagal update di MongoDB: %w", err)
 	}
@@ -330,147 +293,194 @@ func (s *AchievementServiceImpl) UpdateAchievement(
 }
 
 // -----------------------------------------------------------
-// Dosen Wali Operations (FR-007, FR-008)
+// Dosen Wali Operations
 // -----------------------------------------------------------
 
-// verifyAccessCheck: Memastikan dosen adalah advisor dari mahasiswa pemilik prestasi.
-// ... (tetap sama)
+// service/achievement_service.go
 
-// VerifyAchievement: Mengubah status 'submitted' menjadi 'verified' (FR-007)
-// File: uas/app/service/mongo/achievement_service.go (VerifyAchievement)
+// service/achievement_service.go
 
 func (s *AchievementServiceImpl) VerifyAchievement(ctx context.Context, mongoAchievementID string, lecturerIDFromToken uuid.UUID) error {
-	// 1. Ambil Reference (PostgreSQL)
-	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
-	if err != nil { return err }
-
-	// Precondition 1: Status harus 'submitted'
-	if ref.Status != models.StatusSubmitted { return errors.New("prestasi hanya bisa diverifikasi jika berstatus 'submitted'") }
-
-    // 🛑 KOREKSI UTAMA: Lakukan pengecekan akses menggunakan ID Token Dosen
-	if err := s.verifyAccessCheck(ctx, ref, lecturerIDFromToken); err != nil { 
-        return err // <-- Error ini yang mengembalikan "dosen ini tidak berhak..."
+    ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
+    if err != nil { 
+        return err 
     }
 
-	// Set data verifikasi
-	verifiedBy := sql.NullString{String: lecturerIDFromToken.String(), Valid: true}
-	note := sql.NullString{Valid: false} 
+    if ref.Status != models.StatusSubmitted { 
+        return errors.New("prestasi hanya bisa diverifikasi jika berstatus 'submitted'") 
+    }
 
-	// Update status di PostgreSQL
-	return s.PostgreRepo.UpdateReferenceStatus(ctx, ref.ID, models.StatusVerified, note, verifiedBy)
+    // ✅ Pengecekan Akses Dosen Wali (memastikan dosen ini adalah advisor mahasiswa ybs)
+    // Fungsi ini secara internal memanggil GetLecturerProfileID dan GetAdviseeIDs
+    if err := s.verifyAccessCheck(ctx, ref, lecturerIDFromToken); err != nil {
+        return err
+    }
+
+    // ✅ PERBAIKAN: Gunakan langsung lecturerIDFromToken (yang merupakan users.id)
+    verifiedByID := lecturerIDFromToken 
+    
+    // Siapkan data untuk update status
+    verifiedBy := sql.NullString{String: verifiedByID.String(), Valid: true}
+    note := sql.NullString{Valid: false} 
+
+    // Panggil Repository
+    err = s.PostgreRepo.UpdateReferenceStatus(ctx, ref.ID, models.StatusVerified, note, verifiedBy)
+    if err != nil {
+        // Jika masih FK violation, ID user dari token tidak ada di tabel users
+        return fmt.Errorf("gagal update status menjadi verified: %w", err)
+    }
+
+    return nil
 }
-// RejectAchievement: Mengubah status 'submitted' menjadi 'rejected' (FR-008)
-// File: uas/app/service/mongo/achievement_service.go (RejectAchievement)
+
+// Fungsi RejectAchievement
+// service/achievement_service.go
+
+// service/achievement_service.go
 
 func (s *AchievementServiceImpl) RejectAchievement(ctx context.Context, mongoAchievementID string, lecturerIDFromToken uuid.UUID, rejectionNote string) error {
-	// 1. Dapatkan Referensi Prestasi (PostgreSQL)
-	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
-	if err != nil { return err }
-
-	// 2. Validasi Status dan Catatan
-	if ref.Status != models.StatusSubmitted { return errors.New("prestasi hanya bisa ditolak jika berstatus 'submitted'") }
-	if strings.TrimSpace(rejectionNote) == "" { return errors.New("catatan penolakan harus diisi") }
-
-	// 🛑 KOREKSI: Panggil verifyAccessCheck dengan ID Token Dosen
-	if err := s.verifyAccessCheck(ctx, ref, lecturerIDFromToken); err != nil { 
-        return err // Mengembalikan error otorisasi
+    ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
+    if err != nil { 
+        return err 
     }
 
-	// Set data verifikasi
-	verifiedBy := sql.NullString{String: lecturerIDFromToken.String(), Valid: true}
-	note := sql.NullString{String: strings.TrimSpace(rejectionNote), Valid: true}
+    if rejectionNote == "" { 
+        return errors.New("catatan penolakan harus diisi") 
+    }
 
-	// Update status di PostgreSQL
-	if err := s.PostgreRepo.UpdateReferenceStatus(ctx, ref.ID, models.StatusRejected, note, verifiedBy); err != nil { return err }
-	
-	return nil
+    if ref.Status != models.StatusSubmitted {
+        return errors.New("prestasi hanya bisa ditolak jika berstatus 'submitted'")
+    }
+    
+    // ✅ Pengecekan Akses Dosen Wali
+    if err := s.verifyAccessCheck(ctx, ref, lecturerIDFromToken); err != nil { 
+        return err 
+    }
+    
+    // ✅ PERBAIKAN: Gunakan langsung lecturerIDFromToken (yang merupakan users.id)
+    verifiedByID := lecturerIDFromToken 
+
+    verifiedBy := sql.NullString{String: verifiedByID.String(), Valid: true} 
+    note := sql.NullString{String: rejectionNote, Valid: true}
+
+    // Panggil Repository
+    err = s.PostgreRepo.UpdateReferenceStatus(ctx, ref.ID, models.StatusRejected, note, verifiedBy)
+    if err != nil {
+        return fmt.Errorf("gagal update status menjadi rejected: %w", err)
+    }
+    
+    return nil
 }
 // -----------------------------------------------------------
-// Read Operations (FR-006, FR-010)
+// Read Operations
 // -----------------------------------------------------------
 
-// GetAchievementDetail: Mengambil detail lengkap dari kedua DB
-func (s *AchievementServiceImpl) GetAchievementDetail(ctx context.Context, mongoAchievementID string, userID uuid.UUID, userRole string) (*models.AchievementDetail, error) {
-	// 1. Ambil Reference (PostgreSQL)
+func (s *AchievementServiceImpl) GetAchievementDetail(
+	ctx context.Context, 
+	mongoAchievementID string, 
+	userID uuid.UUID, 
+	userRole string,
+) (*models.AchievementDetail, error) {
 	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
 	if err != nil { return nil, err }
 	
-	// ✅ FINAL FIX: Normalisasi userRole yang masuk
 	role := strings.ToLower(userRole) 
 	
-	switch role { 
-	case "mahasiswa": // 🛑 PENTING: HURUF KECIL
+	switch role {
+	case "mahasiswa":
 		studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
-		if err != nil || studentID != ref.StudentID { return nil, errors.New("forbidden: not the owner of this achievement") }
-	case "dosen wali": // 🛑 PENTING: HURUF KECIL
-		if err := s.verifyAccessCheck(ctx, ref, userID); err != nil { return nil, errors.New("forbidden: not advisor for this student") }
-	case "admin": // 🛑 PENTING: HURUF KECIL
-		break 
+		if err != nil || studentID != ref.StudentID { 
+			return nil, errors.New("forbidden: not the owner of this achievement") 
+		}
+	case "dosen wali": 
+		if err := s.verifyAccessCheck(ctx, ref, userID); err != nil { 
+			return nil, errors.New("forbidden: not advisor for this student") 
+		}
+	case "admin": 
+		break
 	default:
 		return nil, errors.New("forbidden: role cannot access achievement details")
 	}
 	
-	// 3. Ambil Detail (MongoDB)
 	mongoID, err := primitive.ObjectIDFromHex(ref.MongoAchievementID)
 	if err != nil { return nil, errors.New("ID MongoDB tidak valid") }
 	
 	mongoDoc, err := s.MongoRepo.GetByID(ctx, mongoID)
 	if err != nil { return nil, fmt.Errorf("gagal fetch detail dari MongoDB: %w", err) }
-
-	// 4. Transformasi dan Return
+	
 	var submittedAt *time.Time
 	if ref.SubmittedAt.Valid { submittedAt = &ref.SubmittedAt.Time }
-
 	var verifiedAt *time.Time
 	if ref.VerifiedAt.Valid { verifiedAt = &ref.VerifiedAt.Time }
+	
+	verifiedByStr := func() string { 
+		if ref.VerifiedBy != nil { 
+			return ref.VerifiedBy.String() 
+		} 
+		return "" 
+	}()
+	
+	rejectionNoteStr := func() string { 
+		if ref.RejectionNote.Valid { 
+			return ref.RejectionNote.String 
+		} 
+		return "" 
+	}()
 
 	return &models.AchievementDetail{
-		Achievement: *mongoDoc,
-		ReferenceID: ref.ID.String(),
-		Status: ref.Status,
-		SubmittedAt: submittedAt,
+		Achievement: *mongoDoc, 
+		ReferenceID: ref.ID.String(), 
+		Status: ref.Status, 
+		SubmittedAt: submittedAt, 
 		VerifiedAt: verifiedAt,
-		VerifiedBy: func() string {
-			if ref.VerifiedBy != nil { return ref.VerifiedBy.String() }
-			return "" 
-		}(),
-		RejectionNote: func() string {
-			if ref.RejectionNote.Valid { return ref.RejectionNote.String }
-			return ""
-		}(),
+		VerifiedBy: verifiedByStr, 
+		RejectionNote: rejectionNoteStr, 
 	}, nil
 }
 
-// ListAchievements: Mengambil daftar prestasi dengan filtering berdasarkan role (FR-006, FR-010)
 func (s *AchievementServiceImpl) ListAchievements(ctx context.Context, userRole string, userID uuid.UUID) ([]models.AchievementDetail, error) {
 	
-var pqRefs []models.AchievementReference
+	var pqRefs []models.AchievementReference
 	var err error
 	
-	// ✅ FINAL FIX: Normalisasi role yang masuk
 	role := strings.ToLower(userRole) 
 
 	switch role {
-	case "admin": // 🛑 PENTING: HURUF KECIL
+	case "admin":
 		pqRefs, err = s.PostgreRepo.GetAllReferences(ctx)
-	case "dosen wali": // 🛑 PENTING: HURUF KECIL
-		adviseeIDs, errAdvisee := s.PostgreRepo.GetAdviseeIDs(ctx, userID)
-		if errAdvisee != nil { return nil, errors.New("gagal mendapatkan mahasiswa bimbingan") }
+	case "dosen wali":
+		lecturerProfileID, errLecturer := s.PostgreRepo.GetLecturerProfileID(ctx, userID)
+		if errLecturer != nil {
+			// 🛑 PERBAIKAN: Mengembalikan error yang lebih informatif
+			return nil, fmt.Errorf("gagal mendapatkan profil dosen yang login (User ID: %s): %w", userID.String(), errLecturer)
+		}
+		adviseeIDs, errAdvisee := s.PostgreRepo.GetAdviseeIDs(ctx, lecturerProfileID)
+		if errAdvisee != nil { 
+			return nil, fmt.Errorf("gagal mendapatkan mahasiswa bimbingan: %w", errAdvisee) 
+		}
+		if len(adviseeIDs) == 0 {
+			return []models.AchievementDetail{}, nil
+		}
 		pqRefs, err = s.PostgreRepo.GetReferencesByStudentIDs(ctx, adviseeIDs)
-	case "mahasiswa": // 🛑 PENTING: HURUF KECIL
+	case "mahasiswa":
 		studentID, errStudent := s.PostgreRepo.GetStudentProfileID(ctx, userID)
-		if errStudent != nil { return nil, errors.New("user tidak memiliki profil mahasiswa") }
+		if errStudent != nil { 
+			return nil, fmt.Errorf("user tidak memiliki profil mahasiswa: %w", errStudent) 
+		}
 		pqRefs, err = s.PostgreRepo.GetReferencesByStudentIDs(ctx, []uuid.UUID{studentID})
 	default:
 		return nil, errors.New("role tidak valid untuk melihat daftar prestasi")
 	}
 	
-	if err != nil { return nil, fmt.Errorf("gagal mengambil referensi prestasi: %w", err) }
-	if len(pqRefs) == 0 { return []models.AchievementDetail{}, nil }
+	if err != nil { return nil, fmt.Errorf("gagal mengambil referensi prestasi dari PostgreSQL: %w", err) }
+	
+	if len(pqRefs) == 0 { 
+		return []models.AchievementDetail{}, nil 
+	}
 
-	// 2. Kumpulkan MongoDB IDs
 	mongoIDs := make([]primitive.ObjectID, 0, len(pqRefs))
 	refMap := make(map[string]models.AchievementReference) 
+	
 	for _, ref := range pqRefs {
 		if ref.Status == models.StatusDeleted {
 			continue 
@@ -482,12 +492,18 @@ var pqRefs []models.AchievementReference
 			refMap[ref.MongoAchievementID] = ref
 		}
 	}
+	
+	if len(mongoIDs) == 0 {
+		return []models.AchievementDetail{}, nil
+	}
 
-	// 3. Fetch Detail dari MongoDB
 	mongoDocs, err := s.MongoRepo.GetByIDs(ctx, mongoIDs) 
 	if err != nil { return nil, fmt.Errorf("gagal fetch detail dari MongoDB: %w", err) }
 	
-	// 4. Gabungkan dan Transformasi
+	if len(mongoDocs) == 0 {
+		return []models.AchievementDetail{}, nil
+	}
+	
 	details := make([]models.AchievementDetail, 0, len(mongoDocs))
 	for _, doc := range mongoDocs {
 		ref, found := refMap[doc.ID.Hex()]
@@ -497,20 +513,24 @@ var pqRefs []models.AchievementReference
 			var verifiedAt *time.Time
 			if ref.VerifiedAt.Valid { verifiedAt = &ref.VerifiedAt.Time }
 			
+			verifiedByStr := func() string { 
+				if ref.VerifiedBy != nil { return ref.VerifiedBy.String() } 
+				return "" 
+			}()
+			
+			rejectionNoteStr := func() string { 
+				if ref.RejectionNote.Valid { return ref.RejectionNote.String } 
+				return "" 
+			}()
+
 			details = append(details, models.AchievementDetail{
 				Achievement: doc,
 				ReferenceID: ref.ID.String(),
 				Status: ref.Status,
 				SubmittedAt: submittedAt,
 				VerifiedAt: verifiedAt,
-				VerifiedBy: func() string {
-					if ref.VerifiedBy != nil { return ref.VerifiedBy.String() }
-					return ""
-				}(),
-				RejectionNote: func() string {
-					if ref.RejectionNote.Valid { return ref.RejectionNote.String }
-					return ""
-				}(),
+				VerifiedBy: verifiedByStr,
+				RejectionNote: rejectionNoteStr,
 			})
 		}
 	}
@@ -518,255 +538,220 @@ var pqRefs []models.AchievementReference
 	return details, nil 
 }
 
-// GetAchievementStatistics: Implementasi dasar untuk FR-011
-// File: uas/app/service/mongo/achievement_service.go (Bagian GetAchievementStatistics)
-
-// ...
-
-// GetAchievementStatistics: Mengembalikan statistik status prestasi (Draft, Submitted, Verified, Rejected)
-// File: uas/app/service/mongo/achievement_service.go (Fungsi GetAchievementStatistics yang telah direvisi)
-
-// ...
-
-// GetAchievementStatistics: Mengembalikan statistik status prestasi (Draft, Submitted, Verified, Rejected)
 func (s *AchievementServiceImpl) GetAchievementStatistics(ctx context.Context, userRole string, userID uuid.UUID) (interface{}, error) {
-    
-    // 1. Validasi Otorisasi
-    role := strings.ToLower(userRole)
-    if role != "admin" {
-        return nil, errors.New("forbidden: hanya Admin yang dapat mengakses statistik global")
-    }
+	
+	role := strings.ToLower(userRole)
+	if role != "admin" {
+		return nil, errors.New("forbidden: hanya Admin yang dapat mengakses statistik global")
+	}
 
-    // 2. Ambil SEMUA referensi prestasi dari PostgreSQL
-    pqRefs, err := s.PostgreRepo.GetAllReferences(ctx)
-    if err != nil { 
-        return nil, fmt.Errorf("gagal mengambil referensi prestasi dari postgre: %w", err) 
-    }
-    
-    // 🛑 LANGKAH 3: Agregasi Statistik (DIPERBAIKI)
-    // Map untuk menghitung status.
-    stats := map[string]int{
-        // Baris 544-547: Konversi eksplisit ke string
-        string(models.StatusDraft):     0, 
-        string(models.StatusSubmitted): 0,
-        string(models.StatusVerified):  0,
-        string(models.StatusRejected):  0,
-    }
-    
-    // Looping dan Agregasi
-    for _, ref := range pqRefs {
-        // Abaikan status deleted (Asumsi status "deleted" adalah string biasa, jika tidak, konversi)
-        if ref.Status == "deleted" { 
-            continue
-        }
-        
-        // Baris 558-559: Konversi eksplisit ref.Status ke string saat mengakses map
-        statusKey := string(ref.Status) // Konversi tipe models.AchievementStatus ke string
-        
-        // Pengecekan status yang valid sebelum increment
-        if _, found := stats[statusKey]; found {
-             stats[statusKey]++ 
-        }
-    }
-    
-    // ... (Lanjutan kode untuk total dan finalStats)
-    total := len(pqRefs) 
-    
-    finalStats := map[string]interface{}{
-        "total_references": total,
-        "status_counts": stats, 
-    }
+	pqRefs, err := s.PostgreRepo.GetAllReferences(ctx)
+	if err != nil { 
+		return nil, fmt.Errorf("gagal mengambil referensi prestasi dari postgre: %w", err) 
+	}
+	
+	stats := map[string]int{
+		string(models.StatusDraft): 0, 
+		string(models.StatusSubmitted): 0,
+		string(models.StatusVerified): 0,
+		string(models.StatusRejected): 0,
+	}
+	
+	for _, ref := range pqRefs {
+		if ref.Status == models.StatusDeleted { 
+			continue
+		}
+		
+		statusKey := string(ref.Status) 
+		
+		if _, found := stats[statusKey]; found {
+			stats[statusKey]++ 
+		}
+	}
+	
+	total := len(pqRefs) 
+	
+	finalStats := map[string]interface{}{
+		"total_references": total,
+		"status_counts": stats, 
+	}
 
-    return finalStats, nil
+	return finalStats, nil
 }
-func (s *AchievementServiceImpl) GetAchievementHistory(ctx context.Context, mongoAchievementID string, userID uuid.UUID, userRole string) ([]models.AchievementReference, error) {
-    
-    // 1. Ambil Reference (PostgreSQL) untuk mendapatkan StudentID pemilik
-    ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
-    if err != nil { 
-        return nil, errors.New("prestasi tidak ditemukan")
-    }
-
-    // 2. LOGIKA OTORISASI AKSES (RBAC Logic)
-    role := strings.ToLower(userRole)
-    canView := false
-
-    switch role {
-    case "admin":
-        canView = true // Admin diizinkan melihat semua
-        
-    case "mahasiswa":
-        studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
-        if err == nil && studentID == ref.StudentID {
-            canView = true // Mahasiswa hanya boleh melihat miliknya
-        }
-        
-    case "dosen wali":
-        if err := s.verifyAccessCheck(ctx, ref, userID); err == nil {
-            canView = true // Dosen Wali hanya boleh melihat bimbingannya
-        }
-    }
-    
-    if !canView {
-        return nil, errors.New("forbidden: tidak memiliki hak untuk melihat riwayat prestasi ini")
-    }
-
-    // 3. Panggil Repository untuk mengambil data history
-    history, err := s.PostgreRepo.GetHistoryByMongoID(ctx, mongoAchievementID)
-    if err != nil {
-        return nil, fmt.Errorf("gagal mengambil riwayat dari database: %w", err)
-    }
-    
-    // 4. Kembalikan data riwayat
-    return history, nil
-}
-
-
-// uas/app/service/mongo/achievement_service.go
-
-// uas/app/service/mongo/achievement_service.go
 
 func (s *AchievementServiceImpl) AddAttachment(ctx context.Context, mongoAchievementID string, userID uuid.UUID, attachment models.Attachment) error {
-    
-    // 1. Ambil Reference (PostgreSQL) untuk validasi kepemilikan dan status
-    ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
-    if err != nil {
-        return errors.New("prestasi tidak ditemukan atau ID tidak valid")
-    }
+	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
+	if err != nil {
+		return errors.New("prestasi tidak ditemukan atau ID tidak valid")
+	}
 
-    // 2. Validasi Kepemilikan (Hanya pemilik yang bisa menambah attachment)
-    studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
-    if err != nil { 
-        return errors.New("user tidak memiliki profil mahasiswa") 
-    }
-    if studentID != ref.StudentID {
-        return errors.New("forbidden: tidak memiliki hak untuk menambah attachment pada prestasi ini")
-    }
+	studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
+	if err != nil { 
+		return errors.New("user tidak memiliki profil mahasiswa") 
+	}
+	if studentID != ref.StudentID {
+		return errors.New("forbidden: tidak memiliki hak untuk menambah attachment pada prestasi ini")
+	}
 
-    // 3. Validasi Status (Hanya boleh saat status DRAFT)
-    if ref.Status != models.StatusDraft {
-        return errors.New("attachment hanya bisa ditambahkan saat prestasi berstatus 'draft'")
-    }
+	if ref.Status != models.StatusDraft {
+		return errors.New("attachment hanya bisa ditambahkan saat prestasi berstatus 'draft'")
+	}
 
-    // 4. Konversi ID MongoDB
-    mongoID, err := primitive.ObjectIDFromHex(mongoAchievementID)
-    if err != nil {
-        return errors.New("ID MongoDB tidak valid")
-    }
-    
-    // 5. Panggil Mongo Repository
-    // ✅ Mengatasi error type mismatch: mengirim pointer (&attachment)
-    err = s.MongoRepo.AddAttachment(ctx, mongoID, &attachment) 
-    if err != nil {
-        // Gabungkan error dari repository dan sertakan ID prestasi
-        return fmt.Errorf("gagal menyimpan attachment di MongoDB: %s", err.Error())
-    }
-    
-    return nil
+	mongoID, err := primitive.ObjectIDFromHex(mongoAchievementID)
+	if err != nil {
+		return errors.New("ID MongoDB tidak valid")
+	}
+	
+	err = s.MongoRepo.AddAttachment(ctx, mongoID, &attachment) 
+	if err != nil {
+		return fmt.Errorf("gagal menyimpan attachment di MongoDB: %s", err.Error())
+	}
+	
+	return nil
 }
+
+func (s *AchievementServiceImpl) GetAchievementHistory(ctx context.Context, mongoAchievementID string, userID uuid.UUID, userRole string) ([]models.AchievementReference, error) {
+	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
+	if err != nil { 
+		return nil, errors.New("prestasi tidak ditemukan")
+	}
+
+	role := strings.ToLower(userRole)
+	
+	switch role {
+	case "mahasiswa":
+		studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
+		if err != nil || studentID != ref.StudentID {
+			return nil, errors.New("forbidden: tidak memiliki akses ke riwayat prestasi ini")
+		}
+	case "dosen wali":
+		if err := s.verifyAccessCheck(ctx, ref, userID); err != nil { 
+			return nil, errors.New("forbidden: tidak memiliki akses ke riwayat prestasi ini") 
+		}
+	case "admin":
+		break 
+	default:
+		return nil, errors.New("forbidden: role tidak dapat mengakses riwayat")
+	}
+
+	history, err := s.PostgreRepo.GetHistoryByMongoID(ctx, mongoAchievementID)
+	if err != nil {
+		return nil, fmt.Errorf("gagal mengambil riwayat dari database: %w", err)
+	}
+	
+	return history, nil
+}
+
 func (s *AchievementServiceImpl) ListAchievementsByStudentID(
-    ctx context.Context, 
-    targetStudentIDString string, 
-    userID uuid.UUID, 
-    userRole string,
+	ctx context.Context, 
+	targetStudentIDString string, 
+	userID uuid.UUID, 
+	userRole string,
 ) ([]models.AchievementDetail, error) {
+	var targetStudentID uuid.UUID
+	if targetStudentIDString == "" {
+		return nil, errors.New("target student ID tidak boleh kosong")
+	}
+	targetStudentID, err := uuid.Parse(targetStudentIDString)
+	if err != nil {
+		return nil, fmt.Errorf("target student ID tidak valid: %w", err)
+	}
 
-    // 1. Validasi Student ID Target
-    targetStudentID, err := uuid.Parse(targetStudentIDString)
-    if err != nil {
-        return nil, errors.New("format student ID tidak valid")
-    }
+	canView := false 
+	
+	if strings.ToLower(userRole) == "admin" {
+		canView = true
+	} else if strings.ToLower(userRole) == "mahasiswa" {
+		profileID, _ := s.PostgreRepo.GetStudentProfileID(ctx, userID) 
+		if profileID == targetStudentID {
+			canView = true
+		}
+	} else if strings.ToLower(userRole) == "dosen wali" {
+		lecturerProfileID, err := s.PostgreRepo.GetLecturerProfileID(ctx, userID)
+		if err == nil {
+			adviseeIDs, _ := s.PostgreRepo.GetAdviseeIDs(ctx, lecturerProfileID)
+			for _, id := range adviseeIDs {
+				if id == targetStudentID {
+					canView = true
+					break
+				}
+			}
+		}
+	}
 
-    // 2. LOGIKA OTORISASI (RBAC/Kepemilikan)
-    canView := false
-    role := strings.ToLower(userRole)
+	if !canView {
+		return nil, errors.New("forbidden: tidak memiliki hak akses untuk melihat prestasi mahasiswa ini")
+	}
 
-    switch role {
-    case "admin":
-        canView = true
-    case "mahasiswa":
-        // Mahasiswa hanya bisa melihat achievement miliknya sendiri
-        currentStudentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
-        if err == nil && currentStudentID == targetStudentID {
-            canView = true
-        }
-    case "dosen wali":
-        // Dosen wali diizinkan jika ID Target adalah mahasiswa bimbingannya
-        tempRef := &models.AchievementReference{StudentID: targetStudentID}
-        if err := s.verifyAccessCheck(ctx, tempRef, userID); err == nil {
-            canView = true
-        }
-    }
+	pqRefs, err := s.PostgreRepo.GetReferencesByStudentIDs(ctx, []uuid.UUID{targetStudentID})
+	if err != nil {
+		return nil, fmt.Errorf("gagal mengambil referensi prestasi dari postgre: %w", err)
+	}
 
-    if !canView {
-        return nil, errors.New("forbidden: tidak memiliki hak akses untuk melihat prestasi mahasiswa ini")
-    }
+	if len(pqRefs) == 0 {
+		return []models.AchievementDetail{}, nil
+	}
 
-    // 3. Ambil References dari PostgreSQL (filter berdasarkan Student ID target)
-    pqRefs, err := s.PostgreRepo.GetReferencesByStudentIDs(ctx, []uuid.UUID{targetStudentID})
-    if err != nil {
-        return nil, fmt.Errorf("gagal mengambil referensi prestasi dari postgre: %w", err)
-    }
+	mongoIDs := make([]primitive.ObjectID, 0, len(pqRefs))
+	refMap := make(map[string]models.AchievementReference)
 
-    if len(pqRefs) == 0 {
-        return []models.AchievementDetail{}, nil
-    }
+	for _, ref := range pqRefs {
+		if ref.Status == models.StatusDeleted || ref.MongoAchievementID == "" {
+			continue
+		}
 
-    // 4. Proses dan filter references yang valid (tidak dihapus)
-    mongoIDs := make([]primitive.ObjectID, 0, len(pqRefs))
-    refMap := make(map[string]models.AchievementReference)
+		objectID, err := primitive.ObjectIDFromHex(ref.MongoAchievementID)
+		if err != nil {
+			continue
+		}
 
-    for _, ref := range pqRefs {
-        if ref.Status == models.StatusDeleted || ref.MongoAchievementID == "" {
-            continue
-        }
+		mongoIDs = append(mongoIDs, objectID)
+		refMap[ref.MongoAchievementID] = ref
+	}
+	
+	if len(mongoIDs) == 0 {
+		return []models.AchievementDetail{}, nil
+	}
 
-        objectID, err := primitive.ObjectIDFromHex(ref.MongoAchievementID)
-        if err != nil {
-            continue // abaikan ID Mongo yang invalid
-        }
+	mongoDocs, err := s.MongoRepo.GetByIDs(ctx, mongoIDs)
+	if err != nil {
+		return nil, fmt.Errorf("gagal fetch detail dari MongoDB: %w", err)
+	}
+	
+	if len(mongoDocs) == 0 {
+		return []models.AchievementDetail{}, nil
+	}
 
-        mongoIDs = append(mongoIDs, objectID)
-        refMap[ref.MongoAchievementID] = ref
-    }
+	details := make([]models.AchievementDetail, 0, len(mongoDocs))
+	for _, doc := range mongoDocs {
+		ref, ok := refMap[doc.ID.Hex()]
+		if !ok {
+			continue
+		}
+		
+		var submittedAt *time.Time
+		if ref.SubmittedAt.Valid { submittedAt = &ref.SubmittedAt.Time }
 
-    if len(mongoIDs) == 0 {
-        return []models.AchievementDetail{}, nil
-    }
+		var verifiedAt *time.Time
+		if ref.VerifiedAt.Valid { verifiedAt = &ref.VerifiedAt.Time }
 
-    // 5. Ambil detail dari MongoDB
-    mongoDocs, err := s.MongoRepo.GetByIDs(ctx, mongoIDs)
-    if err != nil {
-        return nil, fmt.Errorf("gagal fetch detail dari MongoDB: %w", err)
-    }
+		var rejectionNote string
+		if ref.RejectionNote.Valid { rejectionNote = ref.RejectionNote.String }
 
-    // 6. Gabungkan data Reference dan Mongo Document
-    details := make([]models.AchievementDetail, 0, len(mongoDocs))
-    for _, doc := range mongoDocs {
-        if ref, found := refMap[doc.ID.Hex()]; found {
-            var submittedAt *time.Time
-            if ref.SubmittedAt.Valid { submittedAt = &ref.SubmittedAt.Time }
+		var verifiedBy string
+		if ref.VerifiedBy != nil { verifiedBy = ref.VerifiedBy.String() }
 
-            var verifiedAt *time.Time
-            if ref.VerifiedAt.Valid { verifiedAt = &ref.VerifiedAt.Time }
 
-            details = append(details, models.AchievementDetail{
-                Achievement:   doc,
-                ReferenceID:   ref.ID.String(),
-                Status:        ref.Status,
-                SubmittedAt:   submittedAt,
-                VerifiedAt:    verifiedAt,
-                VerifiedBy: func() string {
-                    if ref.VerifiedBy != nil { return ref.VerifiedBy.String() }
-                    return ""
-                }(),
-                RejectionNote: func() string {
-                    if ref.RejectionNote.Valid { return ref.RejectionNote.String }
-                    return ""
-                }(),
-            })
-        }
-    }
-
-    return details, nil
+		details = append(details, models.AchievementDetail{
+			Achievement: doc, 
+			ReferenceID: ref.ID.String(),
+			Status: ref.Status,
+			SubmittedAt: submittedAt,
+			VerifiedAt: verifiedAt,
+			VerifiedBy: verifiedBy,
+			RejectionNote: rejectionNote,
+		})
+	}
+	
+	return details, nil
 }

@@ -192,6 +192,7 @@ type PostgreAchievementRepository interface {
 	GetLecturerProfileID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) 
 	UpdateReferenceForDelete(ctx context.Context, refID uuid.UUID, status models.AchievementStatus) error
 	GetHistoryByMongoID(ctx context.Context, mongoID string) ([]models.AchievementReference, error)
+	
 
 }
 	// ✅ SOFT DELETE: Status Update
@@ -293,89 +294,108 @@ func (r *postgreAchievementRepo) CreateReference(ctx context.Context, ref *model
 	return nil
 }
 
-func (r *postgreAchievementRepo) UpdateReferenceStatus(ctx context.Context, refID uuid.UUID, status models.AchievementStatus, note sql.NullString, verifiedBy sql.NullString) error {
+// uas/app/repository/mongo/postgreAchievementRepo.go (Contoh Implementasi)
+
+// Asumsikan ini adalah bagian dari struct PostgreAchievementRepositoryImpl
+func (r *postgreAchievementRepo) UpdateReferenceStatus(
+	ctx context.Context, 
+	refID uuid.UUID, 
+	status models.AchievementStatus, 
+	rejectionNote sql.NullString, 
+	verifiedBy sql.NullString,
+) error {
+    
+    // Pastikan 'verified_by' di database adalah tipe UUID
 	query := `
-		UPDATE achievement_references
-		SET status = $1, rejection_note = $2, verified_by = $3, updated_at = NOW(),
-		    -- 🛑 PERBAIKAN: Gunakan ::text untuk menghindari error tipe
-			submitted_at = CASE WHEN $1::text = 'submitted' THEN NOW() ELSE submitted_at END,
-			verified_at = CASE WHEN $1::text = 'verified' THEN NOW() ELSE verified_at END
-		WHERE id = $4
+		UPDATE achievement_references 
+		SET 
+			status = $1, 
+			rejection_note = $2, 
+			verified_by = $3, -- Kolom ini
+			updated_at = $4,
+			submitted_at = CASE WHEN $1 = 'submitted' THEN NOW() ELSE submitted_at END,
+			verified_at = CASE WHEN $1 = 'verified' OR $1 = 'rejected' THEN NOW() ELSE verified_at END
+		WHERE id = $5
 	`
-	_, err := r.db.ExecContext(ctx, query, status, note, verifiedBy, refID)
+    
+    // Jika statusnya bukan verified/rejected, di service layer, 
+    // verifiedBy akan dikirim sebagai Valid: false, sehingga Repository mengirimkan NULL.
+    // Jika statusnya verified/rejected, di service layer, verifiedBy adalah ID Dosen valid dengan Valid: true.
+    
+	_, err := r.db.ExecContext(
+		ctx, 
+		query, 
+		status, 
+		rejectionNote, 
+		verifiedBy, // Menggunakan sql.NullString, yang akan menjadi NULL jika Valid=false atau ID UUID String jika Valid=true
+		time.Now(), 
+		refID,
+	)
+    
 	if err != nil {
-		return fmt.Errorf("postgre update status failed: %w", err)
+		return fmt.Errorf("failed to update reference status to '%s': %w", status, err)
 	}
+
 	return nil
 }
 
 func (r *postgreAchievementRepo) GetAdviseeIDs(ctx context.Context, lecturerID uuid.UUID) ([]uuid.UUID, error) {
-	var studentIDs []uuid.UUID
-	query := "SELECT id FROM students WHERE advisor_id = $1"
-	
-	rows, err := r.db.QueryContext(ctx, query, lecturerID)
-	if err != nil {
-		return nil, fmt.Errorf("postgre get advisee IDs failed: %w", err)
-	}
-	defer rows.Close()
+    var studentIDs []uuid.UUID
+    
+    // 💡 PERBAIKAN: Mengganti tabel yang tidak ada ('student_profiles') 
+    // dengan tabel yang diasumsikan ada dan memiliki relasi ('students').
+    // Mengambil kolom 'id' (yang merupakan ID Mahasiswa)
+    query := "SELECT id FROM students WHERE advisor_id = $1" 
+    
+    rows, err := r.db.QueryContext(ctx, query, lecturerID)
+    if err != nil {
+        // Jika error (misalnya tabel 'students' juga tidak ada, atau koneksi), 
+        // error akan di-wrap di sini.
+        return nil, fmt.Errorf("postgre get advisee IDs failed (using students table): %w", err)
+    }
+    defer rows.Close()
 
-	for rows.Next() {
-		var studentID uuid.UUID
-		if err := rows.Scan(&studentID); err != nil {
-			return nil, fmt.Errorf("postgre scan advisee ID failed: %w", err)
-		}
-		studentIDs = append(studentIDs, studentID)
-	}
-	
-	return studentIDs, nil
+    for rows.Next() {
+        var studentID uuid.UUID
+        if err := rows.Scan(&studentID); err != nil {
+            return nil, fmt.Errorf("postgre scan advisee ID failed: %w", err)
+        }
+        studentIDs = append(studentIDs, studentID)
+    }
+    
+    // Pastikan data yang diambil dari DB sudah ada
+    if len(studentIDs) == 0 {
+        // Return nil error, tapi list kosong jika memang tidak ada bimbingan
+        return studentIDs, nil 
+    }
+    
+    return studentIDs, nil
 }
 
 func (r *postgreAchievementRepo) GetReferencesByStudentIDs(ctx context.Context, studentIDs []uuid.UUID) ([]models.AchievementReference, error) {
+
 	if len(studentIDs) == 0 {
 		return []models.AchievementReference{}, nil
 	}
-	
-	query := `SELECT id, student_id, mongo_achievement_id, status, submitted_at, rejection_note, verified_by, verified_at, created_at, updated_at 
-			  FROM achievement_references 
-			  WHERE student_id = ANY($1)`
-	
-	// 🛑 KOREKSI 2: Mengatasi Error UUID Slice dengan pq.Array()
+
+	query := `
+		SELECT id, student_id, mongo_achievement_id, status, submitted_at, rejection_note, verified_by, verified_at, created_at, updated_at
+		FROM achievement_references
+		WHERE student_id = ANY($1)
+	`
+
 	rows, err := r.db.QueryContext(ctx, query, pq.Array(studentIDs))
 	if err != nil {
-		// Error di sini sekarang pasti disebabkan oleh database atau masalah koneksi/type error (bukan pq.Array() lagi)
 		return nil, fmt.Errorf("postgre get references by IDs failed: %w", err)
 	}
 	defer rows.Close()
-	
-	var refs []models.AchievementReference
-	for rows.Next() {
-		var ref models.AchievementReference
-		if err := rows.Scan(
-			&ref.ID, &ref.StudentID, &ref.MongoAchievementID, &ref.Status, &ref.SubmittedAt, &ref.RejectionNote, 
-            &ref.VerifiedBy, // FIX: Sudah menggunakan *uuid.UUID di Model
-            &ref.VerifiedAt, &ref.CreatedAt, &ref.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("postgre scan reference failed: %w", err)
-		}
-		refs = append(refs, ref)
-	}
-	
-	return refs, nil
-}
 
-func (r *postgreAchievementRepo) GetAllReferences(ctx context.Context) ([]models.AchievementReference, error) {
-	query := `SELECT id, student_id, mongo_achievement_id, status, submitted_at, rejection_note, verified_by, verified_at, created_at, updated_at 
-			  FROM achievement_references`
-	
-	rows, err := r.db.QueryContext(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("postgre get all references failed: %w", err)
-	}
-	defer rows.Close()
-	
 	var refs []models.AchievementReference
+
 	for rows.Next() {
 		var ref models.AchievementReference
+		var verifiedByStr sql.NullString // UUID nullable sebagai string (Intermediate)
+
 		if err := rows.Scan(
 			&ref.ID,
 			&ref.StudentID,
@@ -383,101 +403,168 @@ func (r *postgreAchievementRepo) GetAllReferences(ctx context.Context) ([]models
 			&ref.Status,
 			&ref.SubmittedAt,
 			&ref.RejectionNote,
-			&ref.VerifiedBy,
+			&verifiedByStr, // <---- PERBAIKAN: Scan ke intermediate
 			&ref.VerifiedAt,
 			&ref.CreatedAt,
 			&ref.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("postgre scan reference failed: %w", err)
 		}
+
+		// Convert verifiedBy string ke *uuid.UUID
+		var verifiedByID *uuid.UUID
+		if verifiedByStr.Valid {
+			uid, err := uuid.Parse(verifiedByStr.String)
+			if err == nil {
+				verifiedByID = &uid
+			}
+		}
+		ref.VerifiedBy = verifiedByID // Assigment ke pointer UUID
+
 		refs = append(refs, ref)
 	}
-	
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
+
 	return refs, nil
 }
+func (r *postgreAchievementRepo) GetAllReferences(ctx context.Context) ([]models.AchievementReference, error) {
+	query := `SELECT id, student_id, mongo_achievement_id, status, submitted_at, rejection_note, verified_by, verified_at, created_at, updated_at 
+			  FROM achievement_references`
 
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("postgre get all references failed: %w", err)
+	}
+	defer rows.Close()
+
+	var refs []models.AchievementReference
+	for rows.Next() {
+		var ref models.AchievementReference
+		var verifiedByStr sql.NullString // <---- PERBAIKAN: Intermediate string
+
+		if err := rows.Scan(
+			&ref.ID,
+			&ref.StudentID,
+			&ref.MongoAchievementID,
+			&ref.Status,
+			&ref.SubmittedAt,
+			&ref.RejectionNote,
+			&verifiedByStr, // <---- PERBAIKAN: Scan ke intermediate
+			&ref.VerifiedAt,
+			&ref.CreatedAt,
+			&ref.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgre scan reference failed: %w", err)
+		}
+        
+        // Konversi ke *uuid.UUID
+        var verifiedByID *uuid.UUID
+        if verifiedByStr.Valid {
+            uid, _ := uuid.Parse(verifiedByStr.String) // Abaikan error parse UUID (seharusnya sudah dijamin valid)
+            verifiedByID = &uid
+        }
+        ref.VerifiedBy = verifiedByID // Assign
+
+		refs = append(refs, ref)
+	}
+
+	return refs, nil
+}
 // ✅ IMPLEMENTASI SOFT DELETE POSTGRES
 func (r *postgreAchievementRepo) UpdateReferenceForDelete(ctx context.Context, refID uuid.UUID, status models.AchievementStatus) error {
-    
-    // Query ini akan mengubah status menjadi StatusDeleted (yang dikirim dari service)
-    query := `
-    UPDATE achievement_references
-    SET status = $1::achievement_status, -- 🎯 CAST di sini
-        rejection_note = $2, 
-        verified_by = $3, 
-        updated_at = NOW(),
-        -- 🎯 CAST di sini juga (karena di sini dibandingkan dengan literal string)
-        submitted_at = CASE WHEN $1::text = 'submitted' THEN NOW() ELSE submitted_at END, 
-        verified_at = CASE WHEN $1::text = 'verified' THEN NOW() ELSE verified_at END
-    WHERE id = $4
-`           
-    res, err := r.db.ExecContext(ctx, query, status, refID)
-    if err != nil {
-        return fmt.Errorf("postgre update status for soft delete failed: %w", err)
-    }
 
-    rowsAffected, _ := res.RowsAffected()
-    if rowsAffected == 0 {
-        return errors.New("cannot update reference status: id not found")
-    }
-    return nil
+	// Siapkan NullString untuk rejection_note ($2) dan verified_by ($3)
+	// Saat soft delete, kedua field ini disarankan NULL
+	nullString := sql.NullString{Valid: false}
+	
+	// Query ini akan mengubah status menjadi StatusDeleted
+	query := `
+	UPDATE achievement_references
+	SET status = $1::achievement_status, -- $1
+		rejection_note = $2,            -- $2 = nullString
+		verified_by = $3,               -- $3 = nullString
+		updated_at = NOW(),
+		submitted_at = CASE WHEN $1::text = 'submitted' THEN NOW() ELSE submitted_at END, 
+		verified_at = CASE WHEN $1::text = 'verified' THEN NOW() ELSE verified_at END
+	WHERE id = $4
+` 	
+	// 🛑 PERBAIKAN: Kirim 4 parameter (status, nullString, nullString, refID)
+	res, err := r.db.ExecContext(ctx, query, status, nullString, nullString, refID)
+	if err != nil {
+		return fmt.Errorf("postgre update status for soft delete failed: %w", err)
+	}
+
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		return errors.New("cannot update reference status: id not found")
+	}
+	return nil
 }
-
 // Di dalam struct postgreAchievementRepo
 
 // Di implementasi GetLecturerProfileID (Postgre Repository)
 
 func (r *postgreAchievementRepo) GetHistoryByMongoID(ctx context.Context, mongoID string) ([]models.AchievementReference, error) {
-    var refs []models.AchievementReference
-    query := `SELECT id, student_id, mongo_achievement_id, status, submitted_at, rejection_note, verified_by, verified_at, created_at, updated_at 
-              FROM achievement_references 
-              WHERE mongo_achievement_id = $1`
-    
-    // 🛑 PERBAIKAN 1: Menangkap dan menangani error hasil query
-    rows, err := r.db.QueryContext(ctx, query, mongoID)
-    if err != nil {
-        return nil, fmt.Errorf("postgre query GetHistoryByMongoID failed: %w", err)
-    }
-    // 🛑 PERBAIKAN 2: Penting! Selalu tutup rows setelah selesai
-    defer rows.Close() 
+	var refs []models.AchievementReference
+	query := `SELECT id, student_id, mongo_achievement_id, status, submitted_at, rejection_note, verified_by, verified_at, created_at, updated_at 
+			  FROM achievement_references 
+			  WHERE mongo_achievement_id = $1`
 
-    // 🛑 PERBAIKAN 3: Loop untuk melakukan scanning ke struct models.AchievementReference
-    for rows.Next() {
-        var ref models.AchievementReference
-        if err := rows.Scan(
-            &ref.ID,
-            &ref.StudentID,
-            &ref.MongoAchievementID,
-            &ref.Status,
-            &ref.SubmittedAt,
-            &ref.RejectionNote,
-            &ref.VerifiedBy, // Asumsi ini adalah *uuid.UUID atau sql.NullString
-            &ref.VerifiedAt,
-            &ref.CreatedAt,
-            &ref.UpdatedAt,
-        ); err != nil {
-            return nil, fmt.Errorf("postgre scan history failed: %w", err)
+	rows, err := r.db.QueryContext(ctx, query, mongoID)
+	if err != nil {
+		return nil, fmt.Errorf("postgre query GetHistoryByMongoID failed: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var ref models.AchievementReference
+		var verifiedByStr sql.NullString // <---- PERBAIKAN: Intermediate string
+
+		if err := rows.Scan(
+			&ref.ID,
+			&ref.StudentID,
+			&ref.MongoAchievementID,
+			&ref.Status,
+			&ref.SubmittedAt,
+			&ref.RejectionNote,
+			&verifiedByStr, // <---- PERBAIKAN: Scan ke intermediate
+			&ref.VerifiedAt,
+			&ref.CreatedAt,
+			&ref.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgre scan history failed: %w", err)
+		}
+        
+        // Konversi ke *uuid.UUID
+        var verifiedByID *uuid.UUID
+        if verifiedByStr.Valid {
+            uid, _ := uuid.Parse(verifiedByStr.String)
+            verifiedByID = &uid
         }
-        refs = append(refs, ref)
-    }
+        ref.VerifiedBy = verifiedByID // Assign
+		
+		refs = append(refs, ref)
+	}
 
-    // 🛑 PERBAIKAN 4: Cek error setelah loop (jika ada error yang tersembunyi selama iterasi)
-    if err := rows.Err(); err != nil {
-        return nil, fmt.Errorf("error during history iteration: %w", err)
-    }
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during history iteration: %w", err)
+	}
 
-    // ... (Lanjutan scan dan return)
-    return refs, nil
+	return refs, nil
 }
+
 func (r *postgreAchievementRepo) GetLecturerProfileID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
 	var lecturerProfileID uuid.UUID
-	
+
 	// Query untuk mendapatkan ID dosen dari tabel 'lecturers' berdasarkan 'user_id'
 	query := `SELECT id FROM lecturers WHERE user_id = $1`
-	
+
 	// Eksekusi query dan coba scan hasilnya ke lecturerProfileID
 	err := r.db.QueryRowContext(ctx, query, userID).Scan(&lecturerProfileID)
-	
+
 	if err != nil {
 		// 1. Cek jika dosen tidak ditemukan (sql.ErrNoRows)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -486,7 +573,7 @@ func (r *postgreAchievementRepo) GetLecturerProfileID(ctx context.Context, userI
 		// 2. Error database lainnya
 		return uuid.Nil, fmt.Errorf("postgre query GetLecturerProfileID failed: %w", err)
 	}
-	
+
 	// Jika berhasil, kembalikan ID profil dosen (lecturers.id)
 	return lecturerProfileID, nil
 }

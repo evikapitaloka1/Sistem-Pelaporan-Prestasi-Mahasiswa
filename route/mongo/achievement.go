@@ -215,55 +215,51 @@ func AchievementRoutes(
 	// 3. VERIFIKATOR (VERIFY, REJECT)
 	// ------------------------------------------
 
-	// PUT /achievements/:id/verify - Verifikasi Achievement
-	achievements.Put("/:id/verify", rbacVerify, func(c *fiber.Ctx) error {
-		achievementID := c.Params("id")
-		// Catatan: Jika service.VerifyAchievement tidak membutuhkan body, 
-		// tidak perlu ada body parser dan struct request lokal.
+	achievements.Post("/:id/verify", rbacVerify, func(c *fiber.Ctx) error { 
+        achievementID := c.Params("id")
 
-		userID, _, err := getUserData(c)
-		if err != nil {
-			return c.Status(err.(*fiber.Error).Code).JSON(fiber.Map{"error": err.Error()})
-		}
+        userID, _, err := getUserData(c)
+        if err != nil {
+            return c.Status(err.(*fiber.Error).Code).JSON(fiber.Map{"error": err.Error()})
+        }
 
-		// Want: (context.Context, string, "github.com/google/uuid".UUID)
-		serviceErr := achievementSvc.VerifyAchievement(c.Context(), achievementID, userID)
+        serviceErr := achievementSvc.VerifyAchievement(c.Context(), achievementID, userID)
 
-		if serviceErr != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": serviceErr.Error()})
-		}
+        if serviceErr != nil {
+            // Jika ada error di service (misal: not found, already verified, no permission)
+            return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": serviceErr.Error()})
+        }
 
-		return c.JSON(fiber.Map{"status": "success", "message": "Achievement verified successfully"})
-	})
+        return c.JSON(fiber.Map{"status": "success", "message": "Achievement verified successfully"})
+    })
 
-	// PUT /achievements/:id/reject - Tolak Achievement
-	achievements.Put("/:id/reject", rbacVerify, func(c *fiber.Ctx) error {
-		achievementID := c.Params("id")
-		// Menggunakan models.RejectRequest dari package models
-		var req models.RejectRequest
-		if err := c.BodyParser(&req); err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
-		}
+    // PUT /achievements/:id/reject - Tolak Achievement (Menggunakan PUT sesuai kode asli)
+    achievements.Put("/:id/reject", rbacVerify, func(c *fiber.Ctx) error {
+        achievementID := c.Params("id")
+        
+        var req models.RejectRequest
+        if err := c.BodyParser(&req); err != nil {
+            return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+        }
 
-		if req.RejectionNote == "" {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Rejection reason (rejection_note) is required"})
-		}
+        if req.RejectionNote == "" {
+            return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Rejection reason (rejection_note) is required"})
+        }
 
-		// userID SUDAH bertipe uuid.UUID karena perubahan di getUserData
-		userID, _, err := getUserData(c)
-		if err != nil {
-			return c.Status(err.(*fiber.Error).Code).JSON(fiber.Map{"error": err.Error()})
-		}
+        userID, _, err := getUserData(c)
+        if err != nil {
+            return c.Status(err.(*fiber.Error).Code).JSON(fiber.Map{"error": err.Error()})
+        }
 
-		// Memanggil service.RejectAchievement dengan 4 argumen: (ctx, id, userID, RejectionNote)
-		serviceErr := achievementSvc.RejectAchievement(c.Context(), achievementID, userID, req.RejectionNote)
+        serviceErr := achievementSvc.RejectAchievement(c.Context(), achievementID, userID, req.RejectionNote)
 
-		if serviceErr != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": serviceErr.Error()})
-		}
+        if serviceErr != nil {
+            return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": serviceErr.Error()})
+        }
 
-		return c.JSON(fiber.Map{"status": "success", "message": "Achievement rejected successfully"})
-	})
+        return c.JSON(fiber.Map{"status": "success", "message": "Achievement rejected successfully"})
+    })
+	
 	achievements.Post("/:id/attachments", func(c *fiber.Ctx) error {
     achievementID := c.Params("id")
 
