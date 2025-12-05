@@ -1,19 +1,22 @@
-package service
+package services
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
-	"strings" 
-
+    "database/sql" 
+    
 	"github.com/google/uuid"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/bson/primitive" 
 
-	models "uas/app/model/mongo" 
-	repository "uas/app/repository/mongo" 
+	models "uas/app/model/mongo" // Ganti dengan path model yang benar
+    repository "uas/app/repository/mongo" // Asumsikan Anda memiliki interface untuk Repo Postgre dan Mongo
 )
+
+// CATATAN: Definisi UserRepository telah dihapus sesuai permintaan.
+
 
 // =========================================================
 // ACHIEVEMENT SERVICE INTERFACE (CONTRACT)
@@ -45,8 +48,10 @@ type AchievementService interface {
 type AchievementServiceImpl struct {
 	MongoRepo repository.MongoAchievementRepository
 	PostgreRepo repository.PostgreAchievementRepository
+    // PERBAIKAN: Field UserRepo dihapus sesuai permintaan
 }
 
+// PERBAIKAN: NewAchievementService tidak lagi menerima UserRepo
 func NewAchievementService(mRepo repository.MongoAchievementRepository, pRepo repository.PostgreAchievementRepository) AchievementService {
 	return &AchievementServiceImpl{
 		MongoRepo: mRepo,
@@ -199,7 +204,7 @@ func (s *AchievementServiceImpl) SubmitForVerification(ctx context.Context, mong
 	if err != nil {
 		return fmt.Errorf("gagal update status menjadi submitted: %w", err)
 	}
-    
+	
 	return nil
 }
 
@@ -301,36 +306,36 @@ func (s *AchievementServiceImpl) UpdateAchievement(
 // service/achievement_service.go
 
 func (s *AchievementServiceImpl) VerifyAchievement(ctx context.Context, mongoAchievementID string, lecturerIDFromToken uuid.UUID) error {
-    ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
-    if err != nil { 
-        return err 
-    }
+	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
+	if err != nil { 
+		return err 
+	}
 
-    if ref.Status != models.StatusSubmitted { 
-        return errors.New("prestasi hanya bisa diverifikasi jika berstatus 'submitted'") 
-    }
+	if ref.Status != models.StatusSubmitted { 
+		return errors.New("prestasi hanya bisa diverifikasi jika berstatus 'submitted'") 
+	}
 
-    // ✅ Pengecekan Akses Dosen Wali (memastikan dosen ini adalah advisor mahasiswa ybs)
-    // Fungsi ini secara internal memanggil GetLecturerProfileID dan GetAdviseeIDs
-    if err := s.verifyAccessCheck(ctx, ref, lecturerIDFromToken); err != nil {
-        return err
-    }
+	// ✅ Pengecekan Akses Dosen Wali (memastikan dosen ini adalah advisor mahasiswa ybs)
+	// Fungsi ini secara internal memanggil GetLecturerProfileID dan GetAdviseeIDs
+	if err := s.verifyAccessCheck(ctx, ref, lecturerIDFromToken); err != nil {
+		return err
+	}
 
-    // ✅ PERBAIKAN: Gunakan langsung lecturerIDFromToken (yang merupakan users.id)
-    verifiedByID := lecturerIDFromToken 
-    
-    // Siapkan data untuk update status
-    verifiedBy := sql.NullString{String: verifiedByID.String(), Valid: true}
-    note := sql.NullString{Valid: false} 
+	// ✅ PERBAIKAN: Gunakan langsung lecturerIDFromToken (yang merupakan users.id)
+	verifiedByID := lecturerIDFromToken 
+	
+	// Siapkan data untuk update status
+	verifiedBy := sql.NullString{String: verifiedByID.String(), Valid: true}
+	note := sql.NullString{Valid: false} 
 
-    // Panggil Repository
-    err = s.PostgreRepo.UpdateReferenceStatus(ctx, ref.ID, models.StatusVerified, note, verifiedBy)
-    if err != nil {
-        // Jika masih FK violation, ID user dari token tidak ada di tabel users
-        return fmt.Errorf("gagal update status menjadi verified: %w", err)
-    }
+	// Panggil Repository
+	err = s.PostgreRepo.UpdateReferenceStatus(ctx, ref.ID, models.StatusVerified, note, verifiedBy)
+	if err != nil {
+		// Jika masih FK violation, ID user dari token tidak ada di tabel users
+		return fmt.Errorf("gagal update status menjadi verified: %w", err)
+	}
 
-    return nil
+	return nil
 }
 
 // Fungsi RejectAchievement
@@ -339,37 +344,37 @@ func (s *AchievementServiceImpl) VerifyAchievement(ctx context.Context, mongoAch
 // service/achievement_service.go
 
 func (s *AchievementServiceImpl) RejectAchievement(ctx context.Context, mongoAchievementID string, lecturerIDFromToken uuid.UUID, rejectionNote string) error {
-    ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
-    if err != nil { 
-        return err 
-    }
+	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
+	if err != nil { 
+		return err 
+	}
 
-    if rejectionNote == "" { 
-        return errors.New("catatan penolakan harus diisi") 
-    }
+	if rejectionNote == "" { 
+		return errors.New("catatan penolakan harus diisi") 
+	}
 
-    if ref.Status != models.StatusSubmitted {
-        return errors.New("prestasi hanya bisa ditolak jika berstatus 'submitted'")
-    }
-    
-    // ✅ Pengecekan Akses Dosen Wali
-    if err := s.verifyAccessCheck(ctx, ref, lecturerIDFromToken); err != nil { 
-        return err 
-    }
-    
-    // ✅ PERBAIKAN: Gunakan langsung lecturerIDFromToken (yang merupakan users.id)
-    verifiedByID := lecturerIDFromToken 
+	if ref.Status != models.StatusSubmitted {
+		return errors.New("prestasi hanya bisa ditolak jika berstatus 'submitted'")
+	}
+	
+	// ✅ Pengecekan Akses Dosen Wali
+	if err := s.verifyAccessCheck(ctx, ref, lecturerIDFromToken); err != nil { 
+		return err 
+	}
+	
+	// ✅ PERBAIKAN: Gunakan langsung lecturerIDFromToken (yang merupakan users.id)
+	verifiedByID := lecturerIDFromToken 
 
-    verifiedBy := sql.NullString{String: verifiedByID.String(), Valid: true} 
-    note := sql.NullString{String: rejectionNote, Valid: true}
+	verifiedBy := sql.NullString{String: verifiedByID.String(), Valid: true} 
+	note := sql.NullString{String: rejectionNote, Valid: true}
 
-    // Panggil Repository
-    err = s.PostgreRepo.UpdateReferenceStatus(ctx, ref.ID, models.StatusRejected, note, verifiedBy)
-    if err != nil {
-        return fmt.Errorf("gagal update status menjadi rejected: %w", err)
-    }
-    
-    return nil
+	// Panggil Repository
+	err = s.PostgreRepo.UpdateReferenceStatus(ctx, ref.ID, models.StatusRejected, note, verifiedBy)
+	if err != nil {
+		return fmt.Errorf("gagal update status menjadi rejected: %w", err)
+	}
+	
+	return nil
 }
 // -----------------------------------------------------------
 // Read Operations
@@ -539,97 +544,125 @@ func (s *AchievementServiceImpl) ListAchievements(ctx context.Context, userRole 
 }
 
 func (s *AchievementServiceImpl) GetAchievementStatistics(ctx context.Context, userRole string, userID uuid.UUID) (interface{}, error) {
-    role := strings.ToLower(userRole)
-    if role != "admin" {
-        // PERBAIKAN: Jika Dosen Wali/Mahasiswa boleh akses statistik 'own'/'advisee', logika ini perlu diubah.
-        // Berdasarkan SRS: Actor: Mahasiswa (own), Dosen Wali (advisee), Admin (all)
-        // Jika request ini hanya untuk 'all' (Admin), maka biarkan. Jika harus bisa semua, ini perlu logic filter data.
-        // ASUMSI SEMENTARA: Admin Global View (akses 'all')
-        return nil, errors.New("forbidden: hanya Admin yang dapat mengakses statistik global")
-    }
+	role := strings.ToLower(userRole)
+	if role != "admin" {
+		// Batasan akses: hanya Admin untuk statistik global
+		return nil, errors.New("forbidden: hanya Admin yang dapat mengakses statistik global")
+	}
 
-    // --- 1. Ambil Data Operasional dari PostgreSQL (Status Submissions) ---
-    pqRefs, err := s.PostgreRepo.GetAllReferences(ctx)
-    if err != nil {
-        return nil, fmt.Errorf("gagal mengambil referensi prestasi dari postgre: %w", err)
-    }
+	// --- 1. Ambil Data Operasional dari PostgreSQL (Status Submissions) ---
+	// Asumsi PostgreRepo.GetAllReferences mengembalikan semua data reference untuk menghitung status
+	pqRefs, err := s.PostgreRepo.GetAllReferences(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("gagal mengambil referensi prestasi dari postgre: %w", err)
+	}
 
-    statsCounts := map[string]int{
-        string(models.StatusDraft): 0,
-        string(models.StatusSubmitted): 0,
-        string(models.StatusVerified): 0,
-        string(models.StatusRejected): 0,
-    }
+	statsCounts := map[string]int{
+		string(models.StatusDraft): 0,
+		string(models.StatusSubmitted): 0,
+		string(models.StatusVerified): 0,
+		string(models.StatusRejected): 0,
+	}
+	
+	// Hitung status pengajuan (total_submissions & status_counts)
+	for _, ref := range pqRefs {
+		if ref.Status == models.StatusDeleted {
+			continue
+		}
+		statusKey := string(ref.Status)
+		if _, found := statsCounts[statusKey]; found {
+			statsCounts[statusKey]++
+		}
+	}
+	
+	totalReferences := len(pqRefs) 
+	
+	// --- 2. Ambil Data Agregasi Prestasi dari MongoDB ---
+	
+	// Total prestasi per tipe
+	statsByType, err := s.MongoRepo.GetStatsByType(ctx) 
+	if err != nil {
+		return nil, fmt.Errorf("gagal mengambil statistik by type: %w", err)
+	}
+	
+	// Mengambil data statistik berdasarkan periode (tahun integer dari MongoDB)
+	statsByPeriodRaw, err := s.MongoRepo.GetStatsByYear(ctx) 
+	if err != nil {
+		return nil, fmt.Errorf("gagal mengambil statistik by period: %w", err)
+	}
     
-    // Hitung status pengajuan (total_submissions & status_counts)
-    for _, ref := range pqRefs {
-        if ref.Status == models.StatusDeleted {
-            continue
-        }
-        statusKey := string(ref.Status)
-        if _, found := statsCounts[statusKey]; found {
-            statsCounts[statusKey]++
-        }
-    }
-    
-    totalReferences := len(pqRefs) // Total semua referensi (termasuk deleted jika tidak difilter di repo)
-    
-    // --- 2. Ambil Data Agregasi Prestasi dari MongoDB ---
-    
-    // Catatan: Anda perlu repo MongoDB (misalnya, `s.MongoRepo`). Saya asumsikan Anda memilikinya.
-    // Ganti s.PostgreRepo dengan s.MongoRepo di bawah.
-
-    // Total prestasi per tipe
-    statsByType, err := s.MongoRepo.GetStatsByType(ctx) // ASUMSI: GetStatsByType sudah diimplementasikan di MongoRepo
-    if err != nil {
-        return nil, fmt.Errorf("gagal mengambil statistik by type: %w", err)
-    }
-    
-    // Total prestasi per periode (tahun)
-    statsByYear, err := s.MongoRepo.GetStatsByYear(ctx) // ASUMSI: GetStatsByYear sudah diimplementasikan
-    if err != nil {
-        return nil, fmt.Errorf("gagal mengambil statistik by year: %w", err)
-    }
-    
-    // Top mahasiswa berprestasi
-    topStudents, err := s.MongoRepo.GetTopStudents(ctx) // ASUMSI: GetTopStudents sudah diimplementasikan
-    if err != nil {
-        return nil, fmt.Errorf("gagal mengambil top students: %w", err)
-    }
-    
-    // Distribusi tingkat kompetisi
-    statsByLevel, err := s.MongoRepo.GetStatsByLevel(ctx) // ASUMSI: GetStatsByLevel sudah diimplementasikan
-    if err != nil {
-        return nil, fmt.Errorf("gagal mengambil statistik by level: %w", err)
-    }
-    
-    // Total Achievements (Total yang dihitung dari agregasi MongoDB)
-    totalAchievements := 0
-    for _, sbt := range statsByType {
-        totalAchievements += int(sbt.Count)
-    }
-    
-    // --- 3. Gabungkan Hasil ke AchievementStatisticsResult ---
-
-    // Menggunakan struct Result yang sudah Anda buat
-    result := models.AchievementStatisticsResult{
-        LastUpdated: time.Now(),
+    // PERBAIKAN PERIOD: Memastikan period yang tidak valid difilter dan dikonversi
+    statsByPeriod := make([]models.StatsByPeriod, 0, len(statsByPeriodRaw))
+    for _, raw := range statsByPeriodRaw {
+        periodStr := raw.Period
         
-        // Data Postgre
-        TotalReferences: totalReferences, // Ini adalah 'Total Submissions' Anda
-        StatusCounts: statsCounts,
+        // 🛑 ASUMSI PERBAIKAN REPOSITORY/MODEL: Jika 'Period' di struct Anda seharusnya int,
+        // pastikan mappingnya benar. Jika 'Period' string (seperti sekarang), filter nilai non-valid.
+        if periodStr == "" || periodStr == "0" || periodStr == "1970" {
+            // Abaikan atau beri label jika period tidak valid dari MongoDB (misal eventDate null)
+            continue 
+        }
         
-        // Data MongoDB (Agregasi Prestasi Verified)
-        TotalAchievements: totalAchievements, // Hanya hitung prestasi yang Verified (tergantung logic agregasi Anda)
-        AchievementByType: statsByType,
-        AchievementByPeriod: statsByYear,
-        TopStudents: topStudents,
-        CompetitionLevelDistribution: statsByLevel,
+        // Cek jika period adalah tahun integer, bisa ditambahkan logika untuk konversi ke format yang lebih bagus di sini
+        
+        statsByPeriod = append(statsByPeriod, models.StatsByPeriod{
+            Period: periodStr,
+            Count: raw.Count,
+        })
     }
+	
+	// Top mahasiswa berprestasi (hanya StudentID dan Count dari MongoDB)
+	topStudents, err := s.MongoRepo.GetTopStudents(ctx) 
+	if err != nil {
+		return nil, fmt.Errorf("gagal mengambil top students: %w", err)
+	}
     
-    return result, nil
+	// Distribusi tingkat kompetisi
+	statsByLevel, err := s.MongoRepo.GetStatsByLevel(ctx) 
+	if err != nil {
+		return nil, fmt.Errorf("gagal mengambil statistik by level: %w", err)
+	}
+	
+	// Total Achievements (Total yang dihitung dari agregasi MongoDB)
+	totalAchievements := 0
+	for _, sbt := range statsByType {
+		totalAchievements += int(sbt.Count)
+	}
+
+	// --- 3. Finalisasi Top Students (Hanya ID dan Count) ---
+    // PERBAIKAN: Menjamin StudentID diisi, dan StudentName dikosongkan.
+	// PERBAIKAN: Menjamin StudentID diisi dan memfilter ID yang tidak valid.
+	finalTopStudents := make([]models.StatsTopStudent, 0, len(topStudents))
+	for _, ts := range topStudents {
+        // PERBAIKAN: Cek apakah StudentID dari repo valid (tidak kosong)
+        if ts.StudentID.String() != "" && ts.StudentID.String() != "00000000-0000-0000-0000-000000000000" {
+            // Karena model StatsTopStudent hanya berisi StudentID dan Count, kita langsung append.
+            // Tidak perlu set ts.StudentName karena field tersebut sudah dihapus.
+            finalTopStudents = append(finalTopStudents, ts) 
+        }
+	}
+	
+	
+	// --- 4. Gabungkan Hasil ke AchievementStatisticsResult ---
+
+	result := models.AchievementStatistics{
+		// PERBAIKAN: Mengganti Format ke time.Now() agar sesuai dengan time.Time di struct model
+		LastUpdated: time.Now(), 
+		
+		// Data Postgre
+		TotalSubmissions: totalReferences, 
+		StatusCounts: statsCounts,
+		
+		// Data Agregasi (MongoDB)
+		TotalAchievements: totalAchievements, 
+		AchievementByType: statsByType,
+		AchievementByPeriod: statsByPeriod, // Menggunakan statsByPeriod yang sudah di-filter
+		TopStudents: finalTopStudents,
+		CompetitionLevelDistribution: statsByLevel,
+	}
+	
+	return result, nil
 }
-
 func (s *AchievementServiceImpl) AddAttachment(ctx context.Context, mongoAchievementID string, userID uuid.UUID, attachment models.Attachment) error {
 	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
 	if err != nil {

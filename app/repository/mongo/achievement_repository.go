@@ -35,9 +35,9 @@ type MongoAchievementRepository interface {
 	AddAttachment(ctx context.Context, achievementID primitive.ObjectID, attachment *models.Attachment) error
 	
 	GetStatsByType(ctx context.Context) ([]models.StatsByType, error)
-    GetStatsByYear(ctx context.Context) ([]models.StatsByYear, error)
+    GetStatsByYear(ctx context.Context) ([]models.StatsByPeriod, error)
     GetStatsByLevel(ctx context.Context) ([]models.StatsByLevel, error)
-    GetTopStudents(ctx context.Context) ([]models.StatsTopStudents, error)
+    GetTopStudents(ctx context.Context) ([]models.StatsTopStudent, error)
 }
 
 type mongoAchievementRepo struct {
@@ -79,7 +79,7 @@ func (r *mongoAchievementRepo) GetStatsByType(ctx context.Context) ([]models.Sta
 }
 
 // --- 2. Total prestasi per periode (Tahun EventDate) ---
-func (r *mongoAchievementRepo) GetStatsByYear(ctx context.Context) ([]models.StatsByYear, error) {
+func (r *mongoAchievementRepo) GetStatsByYear(ctx context.Context) ([]models.StatsByPeriod, error) {
 	pipeline := []bson.D{
 		// 1. AddFields: Ekstrak tahun dari EventDate
 		{{"$addFields", bson.D{
@@ -100,7 +100,7 @@ func (r *mongoAchievementRepo) GetStatsByYear(ctx context.Context) ([]models.Sta
 	}
 	defer cursor.Close(ctx)
 
-	var results []models.StatsByYear
+	var results []models.StatsByPeriod
 	if err := cursor.All(ctx, &results); err != nil {
 		return nil, fmt.Errorf("mongo decode stats by year failed: %w", err)
 	}
@@ -138,7 +138,7 @@ func (r *mongoAchievementRepo) GetStatsByLevel(ctx context.Context) ([]models.St
 }
 
 // --- 4. Top mahasiswa berprestasi (Top Students) ---
-func (r *mongoAchievementRepo) GetTopStudents(ctx context.Context) ([]models.StatsTopStudents, error) {
+func (r *mongoAchievementRepo) GetTopStudents(ctx context.Context) ([]models.StatsTopStudent, error) {
 	// Catatan: Agar output ini lengkap (NIM/Nama), Anda perlu me-JOIN dengan data mahasiswa
 	// (misalnya dari PostgreSQL atau service eksternal) setelah agregasi ini.
 	// Di sini kita hanya mengembalikan StudentID (UUID) dan Count.
@@ -161,7 +161,7 @@ func (r *mongoAchievementRepo) GetTopStudents(ctx context.Context) ([]models.Sta
 	}
 	defer cursor.Close(ctx)
 
-	var results []models.StatsTopStudents
+	var results []models.StatsTopStudent
 	if err := cursor.All(ctx, &results); err != nil {
 		return nil, fmt.Errorf("mongo decode top students failed: %w", err)
 	}

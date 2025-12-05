@@ -171,27 +171,28 @@ type RejectRequest struct {
     // Tag JSON harus SAMA PERSIS dengan key yang dikirim di Postman (rejection_note)
     RejectionNote string `json:"rejection_note"` 
 }
-// StatsByType: Total prestasi per tipe/kategori
 type StatsByType struct {
 	Type  string `json:"type" bson:"_id"` 
 	Count int64  `json:"count" bson:"count"`
 }
 
-// StatsByYear: Total prestasi per tahun/periode
-type StatsByYear struct {
-	Year  int    `json:"year" bson:"_id"` 
-	Count int64  `json:"count" bson:"count"`
+// PERBAIKAN: StatsByPeriod
+// Mengganti StatsByYear. Menggunakan string untuk 'Period' agar bisa menampung format tahun/semester.
+type StatsByPeriod struct {
+	Period string `json:"period" bson:"_id"` // Mengganti 'Year' int menjadi 'Period' string
+	Count  int64  `json:"count" bson:"count"`
 }
 
-// StatsTopStudents: Daftar mahasiswa dengan prestasi terbanyak
-type StatsTopStudents struct {
-	StudentID   uuid.UUID `json:"student_id" bson:"_id"`
-	StudentNIM  string    `json:"student_nim" bson:"student_nim"` 
-	StudentName string    `json:"student_name" bson:"student_name"` 
-	Count       int64     `json:"count" bson:"count"`
+// PERBAIKAN: StatsTopStudent
+// Menghilangkan StudentNIM dan StudentName karena lookup data user dihapus dari service layer.
+type StatsTopStudent struct {
+	StudentID uuid.UUID `json:"student_id" bson:"_id"`
+	// StudentNIM string `json:"student_nim,omitempty"` // Dihapus
+	// StudentName string `json:"student_name,omitempty"` // Dihapus
+	Count     int64     `json:"count" bson:"count"`
 }
 
-// StatsByLevel: Distribusi tingkat kompetisi (Level)
+// StatsByLevel: Distribusi tingkat kompetisi (Tidak berubah)
 type StatsByLevel struct {
 	Level string `json:"level" bson:"_id"` 
 	Count int64  `json:"count" bson:"count"`
@@ -199,18 +200,18 @@ type StatsByLevel struct {
 
 // --- Struktur Utama Output Diperbarui ---
 
-// AchievementStatisticsResult: Struktur hasil akhir untuk API Response
-type AchievementStatisticsResult struct {
-	LastUpdated time.Time 		`json:"lastUpdated"` 
+// PERBAIKAN: AchievementStatistics (menggunakan nama yang digunakan di service layer)
+type AchievementStatistics struct {
+	LastUpdated time.Time `json:"lastUpdated"` 
 	
 	// Data Operasional (dari Postgre)
-	TotalReferences int 		`json:"total_submissions"` // Total Pengajuan (draft, submitted, verified, rejected)
-	StatusCounts map[string]int `json:"status_counts"` 	  // Jumlah per status
+	TotalSubmissions int `json:"total_submissions"` 
+	StatusCounts  map[string]int `json:"status_counts"` 
 	
 	// Data Agregasi (dari MongoDB)
-	TotalAchievements int 		`json:"total_achievements"` // Total Prestasi yang VERIFIED
-	AchievementByType []StatsByType `json:"achievement_by_type"` // Sesuai permintaan Anda
-	AchievementByPeriod []StatsByYear `json:"achievement_by_period"` // Sesuai permintaan Anda
-	TopStudents []StatsTopStudents 	`json:"top_students"` // Sesuai permintaan Anda
-	CompetitionLevelDistribution []StatsByLevel `json:"competition_level_distribution"` // Sesuai permintaan Anda
+	TotalAchievements int `json:"total_achievements"` 
+	AchievementByType  []StatsByType  `json:"achievement_by_type"` 
+	AchievementByPeriod []StatsByPeriod  `json:"achievement_by_period"` // Menggunakan StatsByPeriod
+	TopStudents []StatsTopStudent `json:"top_students"` // Menggunakan StatsTopStudent
+	CompetitionLevelDistribution []StatsByLevel `json:"competition_level_distribution"` 
 }
