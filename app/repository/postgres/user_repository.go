@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// ================= INTERFACE =================
 type UserRepository interface {
 	ListUsers(ctx context.Context) ([]model.User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (*model.User, error)
@@ -21,21 +20,17 @@ type UserRepository interface {
 	UpdateUserRole(ctx context.Context, id uuid.UUID, roleID uuid.UUID) error
 }
 
-// ================= IMPLEMENTATION =================
 type userRepo struct{}
 
-// constructor
 func NewUserRepository() UserRepository {
 	return &userRepo{}
 }
 
-// ================= METHODS =================
-
 func (r *userRepo) ListUsers(ctx context.Context) ([]model.User, error) {
 	query := `
 		SELECT u.id, u.username, u.email, u.password_hash, u.full_name,
-		       u.role_id, r.name AS role_name, u.is_active,
-		       u.created_at, u.updated_at
+			   u.role_id, r.name AS role_name, u.is_active,
+			   u.created_at, u.updated_at
 		FROM users u
 		JOIN roles r ON u.role_id = r.id
 		ORDER BY u.created_at DESC;
@@ -85,8 +80,8 @@ func (r *userRepo) ListUsers(ctx context.Context) ([]model.User, error) {
 func (r *userRepo) GetUserByID(ctx context.Context, id uuid.UUID) (*model.User, error) {
 	query := `
 		SELECT u.id, u.username, u.email, u.password_hash, u.full_name,
-		       u.role_id, r.name AS role_name, u.is_active,
-		       u.created_at, u.updated_at
+			   u.role_id, r.name AS role_name, u.is_active,
+			   u.created_at, u.updated_at
 		FROM users u
 		JOIN roles r ON u.role_id = r.id
 		WHERE u.id = $1;
@@ -148,9 +143,9 @@ func (r *userRepo) UpdateUser(ctx context.Context, id uuid.UUID, req model.Updat
 	query := `
 		UPDATE users
 		SET username=$1,
-		    email=$2,
-		    full_name=$3,
-		    updated_at=NOW()
+			email=$2,
+			full_name=$3,
+			updated_at=NOW()
 		WHERE id=$4;
 	`
 

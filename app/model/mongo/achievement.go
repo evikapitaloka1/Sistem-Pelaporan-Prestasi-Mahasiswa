@@ -215,3 +215,17 @@ type AchievementStatistics struct {
 	TopStudents []StatsTopStudent `json:"top_students"` // Menggunakan StatsTopStudent
 	CompetitionLevelDistribution []StatsByLevel `json:"competition_level_distribution"` 
 }
+type MetaInfo struct {
+	Page         int    `json:"page"`
+	Limit        int    `json:"limit"`
+	Total        int    `json:"total"`
+	Pages        int    `json:"pages"`
+	SortBy       string `json:"sortBy"`
+	Order        string `json:"order"`
+	Search       string `json:"search"`
+	StatusFilter string `json:"statusFilter,omitempty"` // Tambahan untuk filter status
+}
+type AchievementResponse struct {
+	Data []AchievementDetail `json:"data"`
+	Meta MetaInfo            `json:"meta"`
+}

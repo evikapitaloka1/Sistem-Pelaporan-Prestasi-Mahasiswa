@@ -1,4 +1,4 @@
-package service
+package services
 
 import (
 	"context"
@@ -24,10 +24,6 @@ func NewStudentService(repo repo.StudentRepository) StudentService {
 	return &StudentServiceImpl{Repo: repo}
 }
 
-//
-// ========================================================================
-// ListStudents — Mengandung logika RBAC: Admin full access, mahasiswa self-access
-// ========================================================================
 func (s *StudentServiceImpl) ListStudents(
 	ctx context.Context,
 	requestingUserID uuid.UUID,
@@ -36,12 +32,10 @@ func (s *StudentServiceImpl) ListStudents(
 
 	role := strings.ToLower(strings.TrimSpace(requestingUserRole))
 
-	// --- 1. Admin memiliki akses penuh ---
 	if role == "admin" || role == "administrator" {
 		return s.Repo.GetAll(ctx)
 	}
 
-	// --- 2. Mahasiswa hanya bisa melihat data dirinya sendiri ---
 	if role == "student" || role == "mahasiswa" {
 		student, err := s.Repo.FindStudentByUserID(ctx, requestingUserID)
 		if err != nil {
@@ -50,14 +44,9 @@ func (s *StudentServiceImpl) ListStudents(
 		return []models.Student{*student}, nil
 	}
 
-	// --- 3. Role lain (dosen, operator, dll) tidak boleh akses ---
 	return nil, errors.New("unauthorized: only admin or the student themself can view this list")
 }
 
-//
-// ========================================================================
-// GetStudentDetail — Mengambil detail mahasiswa berdasarkan ID UUID
-// ========================================================================
 func (s *StudentServiceImpl) GetStudentDetail(ctx context.Context, studentIDStr string) (*models.Student, error) {
 	studentIDStr = strings.TrimSpace(studentIDStr)
 
@@ -69,10 +58,6 @@ func (s *StudentServiceImpl) GetStudentDetail(ctx context.Context, studentIDStr 
 	return s.Repo.GetByID(ctx, studentID)
 }
 
-//
-// ========================================================================
-// UpdateAdvisor — Hanya Admin yang boleh update advisor mahasiswa
-// ========================================================================
 func (s *StudentServiceImpl) UpdateAdvisor(ctx context.Context, studentIDStr string, newAdvisorIDStr string, callerRole string) error {
 
 	if strings.ToLower(callerRole) != "admin" {
