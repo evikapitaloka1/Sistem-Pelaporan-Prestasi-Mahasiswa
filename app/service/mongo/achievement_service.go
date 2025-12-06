@@ -374,76 +374,82 @@ func (s *AchievementServiceImpl) RejectAchievement(ctx context.Context, mongoAch
 // -----------------------------------------------------------
 
 func (s *AchievementServiceImpl) GetAchievementDetail(
-	ctx context.Context,
-	mongoAchievementID string,
-	userID uuid.UUID,
-	userRole string,
+    ctx context.Context,
+    mongoAchievementID string,
+    userID uuid.UUID,
+    userRole string,
 ) (*models.AchievementDetail, error) {
-	ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
-	if err != nil {
-		return nil, err
-	}
+    ref, err := s.PostgreRepo.GetReferenceByMongoID(ctx, mongoAchievementID)
+    if err != nil {
+        return nil, err
+    }
 
-	role := strings.ToLower(userRole)
+    role := strings.ToLower(userRole)
 
-	switch role {
-	case "mahasiswa":
-		studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
-		if err != nil || studentID != ref.StudentID {
-			return nil, errors.New("forbidden: not the owner of this achievement")
-		}
-	case "dosen wali":
-		if err := s.verifyAccessCheck(ctx, ref, userID); err != nil {
-			return nil, errors.New("forbidden: not advisor for this student")
-		}
-	case "admin":
-		break
-	default:
-		return nil, errors.New("forbidden: role cannot access achievement details")
-	}
+    switch role {
+    case "mahasiswa":
+        studentID, err := s.PostgreRepo.GetStudentProfileID(ctx, userID)
+        if err != nil {
+            fmt.Println("DEBUG: GetStudentProfileID error:", err)
+            return nil, err
+        }
 
-	mongoID, err := primitive.ObjectIDFromHex(ref.MongoAchievementID)
-	if err != nil {
-		return nil, errors.New("ID MongoDB tidak valid")
-	}
+        fmt.Println("DEBUG: JWT userID:", userID)
+        fmt.Println("DEBUG: StudentID from repo:", studentID)
+        fmt.Println("DEBUG: StudentID from achievement ref:", ref.StudentID)
 
-	mongoDoc, err := s.MongoRepo.GetByID(ctx, mongoID)
-	if err != nil {
-		return nil, fmt.Errorf("gagal fetch detail dari MongoDB: %w", err)
-	}
+        if studentID != ref.StudentID {
+            return nil, errors.New("forbidden: not the owner of this achievement")
+        }
 
-	var submittedAt *time.Time
-	if ref.SubmittedAt.Valid {
-		submittedAt = &ref.SubmittedAt.Time
-	}
-	var verifiedAt *time.Time
-	if ref.VerifiedAt.Valid {
-		verifiedAt = &ref.VerifiedAt.Time
-	}
+    case "dosen wali":
+        if err := s.verifyAccessCheck(ctx, ref, userID); err != nil {
+            return nil, errors.New("forbidden: not advisor for this student")
+        }
+    case "admin":
+        break
+    default:
+        return nil, errors.New("forbidden: role cannot access achievement details")
+    }
 
-	verifiedByStr := func() string {
-		if ref.VerifiedBy != nil {
-			return ref.VerifiedBy.String()
-		}
-		return ""
-	}()
+    mongoID, err := primitive.ObjectIDFromHex(ref.MongoAchievementID)
+    if err != nil {
+        return nil, errors.New("ID MongoDB tidak valid")
+    }
 
-	rejectionNoteStr := func() string {
-		if ref.RejectionNote.Valid {
-			return ref.RejectionNote.String
-		}
-		return ""
-	}()
+    mongoDoc, err := s.MongoRepo.GetByID(ctx, mongoID)
+    if err != nil {
+        return nil, fmt.Errorf("gagal fetch detail dari MongoDB: %w", err)
+    }
 
-	return &models.AchievementDetail{
-		Achievement: *mongoDoc,
-		ReferenceID: ref.ID.String(),
-		Status: ref.Status,
-		SubmittedAt: submittedAt,
-		VerifiedAt: verifiedAt,
-		VerifiedBy: verifiedByStr,
-		RejectionNote: rejectionNoteStr,
-	}, nil
+    var submittedAt *time.Time
+    if ref.SubmittedAt.Valid {
+        submittedAt = &ref.SubmittedAt.Time
+    }
+    var verifiedAt *time.Time
+    if ref.VerifiedAt.Valid {
+        verifiedAt = &ref.VerifiedAt.Time
+    }
+
+    verifiedByStr := ""
+    if ref.VerifiedBy != nil {
+        verifiedByStr = ref.VerifiedBy.String()
+    }
+
+    rejectionNoteStr := ""
+    if ref.RejectionNote.Valid {
+        rejectionNoteStr = ref.RejectionNote.String
+    }
+
+    return &models.AchievementDetail{
+        Achievement:  *mongoDoc,
+        ReferenceID:  ref.ID.String(),
+        Status:       ref.Status,
+        SubmittedAt:  submittedAt,
+        VerifiedAt:   verifiedAt,
+        VerifiedBy:   verifiedByStr,
+        RejectionNote: rejectionNoteStr,
+    }, nil
 }
 
 func (s *AchievementServiceImpl) ListAchievements(ctx context.Context, userRole string, userID uuid.UUID) ([]models.AchievementDetail, error) {

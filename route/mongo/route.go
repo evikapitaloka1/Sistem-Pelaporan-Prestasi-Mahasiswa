@@ -12,6 +12,7 @@ import (
 
     // Service
     authServicePkg "uas/app/service/postgres"
+    studentServicePkg "uas/app/service/postgres"
     achievementServicePkg "uas/app/service/mongo"
 )
 
@@ -19,23 +20,39 @@ import (
 func RegisterRoutesMongo(app *fiber.App, mongodb any, db *sql.DB) {
     api := app.Group("/api/v1")
 
+    // =========================
     // Auth Service
+    // =========================
     authRepo := pgRepo.NewAuthRepository()
     authService := authServicePkg.NewAuthService(authRepo)
 
-    // Mongo Repository
+    // =========================
+    // Student Service
+    // =========================
+    studentRepo := pgRepo.NewStudentRepository(db)
+    studentService := studentServicePkg.NewStudentService(studentRepo)
+
+    // =========================
+    // Mongo Repository (Achievement)
+    // =========================
     coll, ok := mongodb.(*mongo.Collection)
     if !ok {
         panic("mongoColl harus bertipe *mongo.Collection")
     }
     achievementMongoRepo := mongoRepo.NewMongoAchievementRepository(coll)
 
-    // Postgre Repository
+    // =========================
+    // Postgre Repository (Achievement)
+    // =========================
     achievementPGRepo := pgRepo.NewPostgreAchievementRepository(db)
 
+    // =========================
     // Achievement Service
+    // =========================
     achievementService := achievementServicePkg.NewAchievementService(achievementMongoRepo, achievementPGRepo)
 
+    // =========================
     // Register Routes
-    AchievementRoutes(api, authService, achievementService)
+    // =========================
+    AchievementRoutes(api, authService, achievementService, studentService)
 }

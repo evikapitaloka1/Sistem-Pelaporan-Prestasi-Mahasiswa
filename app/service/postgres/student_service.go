@@ -14,6 +14,7 @@ type StudentService interface {
 	ListStudents(ctx context.Context, requestingUserID uuid.UUID, requestingUserRole string) ([]models.Student, error)
 	GetStudentDetail(ctx context.Context, studentID string) (*models.Student, error)
 	UpdateAdvisor(ctx context.Context, studentID string, newAdvisorID string, callerRole string) error
+	GetStudentProfileID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error)
 }
 
 type StudentServiceImpl struct {
@@ -78,4 +79,12 @@ func (s *StudentServiceImpl) UpdateAdvisor(ctx context.Context, studentIDStr str
 	}
 
 	return s.Repo.UpdateAdvisor(ctx, studentID, newAdvisorID)
+}
+func (s *StudentServiceImpl) GetStudentProfileID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+    // ambil profileID dari DB
+    profileID, err := s.Repo.GetStudentIDByUserID(ctx, userID)
+    if err != nil {
+        return uuid.Nil, err
+    }
+    return profileID, nil
 }

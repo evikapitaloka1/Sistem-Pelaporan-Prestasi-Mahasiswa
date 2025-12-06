@@ -4,7 +4,7 @@ import (
     "context"
     "errors"
     "strings"
-	"net/http"
+
 
     "github.com/gofiber/fiber/v2"
     "github.com/google/uuid"
@@ -40,57 +40,73 @@ func ErrorResponse(c *fiber.Ctx, status int, err error) error {
     })
 }
 
-func ServiceResponse(c *fiber.Ctx, data interface{}, err error) error {
+func ServiceResponse(c *fiber.Ctx, data interface{}, err error, msg ...string) error {
     if err != nil {
-        if strings.Contains(err.Error(), "forbidden") {
-            return ErrorResponse(c, fiber.StatusForbidden, err)
-        }
-        return ErrorResponse(c, fiber.StatusBadRequest, err)
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+            "status": "error",
+            "message": err.Error(),
+        })
     }
-    return c.JSON(fiber.Map{"status": "success", "data": data})
+
+    response := fiber.Map{
+        "status": "success",
+        "data":   data,
+    }
+
+    if len(msg) > 0 {
+        response["message"] = msg[0]
+    }
+
+    return c.JSON(response)
 }
+
 
 //
 // ===================== BUSINESS LOGIC HELPER =====================
 //
 
 // --- DETAIL STUDENT ---
-func HandleStudentDetailAccess(c *fiber.Ctx, studentUserID uuid.UUID, requesterID uuid.UUID, requesterRole string) error {
+func HandleStudentDetailAccess(c *fiber.Ctx, studentUserID uuid.UUID, jwtUserID uuid.UUID, role string) error {
+    role = strings.ToLower(role)
 
-	// Admin boleh akses semua
-	if requesterRole == "admin" {
-		return nil
-	}
+    switch role {
+    case "mahasiswa":
+        if studentUserID.String() != jwtUserID.String() {
+            return errors.New("akses ditolak: hanya mahasiswa bisa mengakses data sendiri")
+        }
+    case "admin":
+        // admin bisa akses semua
+        return nil
+    default:
+        return errors.New("akses ditolak: role tidak memiliki hak")
+    }
 
-	// Mahasiswa hanya boleh akses dirinya sendiri
-	if requesterRole == "student" {
-		if requesterID != studentUserID {
-			return JsonError(c, http.StatusForbidden, "forbidden: tidak boleh mengakses data mahasiswa lain")
-		}
-		return nil
-	}
-
-	// Dosen wali hanya boleh akses advisee
-	if requesterRole == "lecturer" {
-		// cek di service lecturer, jangan di helper
-		return nil
-	}
-
-	return JsonError(c, http.StatusForbidden, "forbidden: role tidak dikenali")
+    return nil
 }
 
 // --- VALIDASI ACCES ACHIEVEMENT ---
 func ValidateAchievementAccess(targetID string, requester uuid.UUID, role string) error {
-
-    if targetID == requester.String() {
-        return nil // Owner → OK
+    roleLower := strings.ToLower(role)
+    
+    // Admin dan Dosen Wali diizinkan untuk melewati pengecekan ini
+    if strings.Contains(roleLower, "admin") || strings.Contains(roleLower, "dosen wali") {
+        return nil
     }
 
-    // mahasiswa TIDAK BOLEH akses punya orang lain
-    if strings.EqualFold(role, "Mahasiswa") {
-        return errors.New("akses ditolak: hanya boleh melihat prestasi sendiri")
+    // Jika requester adalah Mahasiswa, kita berasumsi ia mencoba mengakses profilnya
+    // dan membiarkan layer Service (yang punya akses DB) yang melakukan validasi
+    // apakah requester.userID sesuai dengan targetID.
+    if strings.Contains(roleLower, "mahasiswa") {
+        return nil 
     }
 
-    // Admin/Dosen lanjut
+    // Default: Jika role tidak terdefinisi/tidak diizinkan, kembalikan error.
+    // Namun, berdasarkan logika sebelumnya, kita hanya perlu menghapus bagian yang memblokir Mahasiswa.
+    
+    // Opsional: Jika Anda ingin lebih ketat dan hanya membolehkan role tertentu
+    // Anda bisa mengubahnya menjadi:
+    // return errors.New("akses ditolak: role tidak diizinkan untuk melihat prestasi")
+    
+    // Untuk kasus ini, kita kembalikan nil untuk role Mahasiswa agar Service yang memvalidasi.
     return nil
 }

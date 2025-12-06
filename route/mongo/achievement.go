@@ -13,6 +13,7 @@ import (
 
 	achievementService "uas/app/service/mongo"
 	authService "uas/app/service/postgres"
+	postgres "uas/app/service/postgres"
 	models "uas/app/model/mongo"
 )
 
@@ -20,6 +21,7 @@ func AchievementRoutes(
 	api fiber.Router,
 	authSvc *authService.AuthService,
 	achievementSvc achievementService.AchievementService,
+	studentSvc postgres.StudentService,
 ) {
 	jwtMW := mw.JWTMiddleware(&helper.NoopBlacklistChecker{})
 
@@ -187,32 +189,54 @@ func AchievementRoutes(
 
 	// ATTACHMENT ==========================================
 	ach.Post("/:id/attachments", func(c *fiber.Ctx) error {
-		id := c.Params("id")
+    mongoID := c.Params("id")
 
-		raw := c.Locals("userID")
-		u, err := uuid.Parse(fmt.Sprint(raw))
-		if err != nil {
-			return helper.SendError(c, fiber.StatusUnauthorized, "invalid user id")
-		}
+    // Ambil userID dari JWT
+    raw := c.Locals("userID")
+    userID, err := uuid.Parse(fmt.Sprint(raw))
+    if err != nil {
+        return helper.SendError(c, fiber.StatusUnauthorized, "invalid user id")
+    }
 
-		file, err := c.FormFile("file")
-		if err != nil {
-			return helper.SendError(c, fiber.StatusBadRequest, "file required")
-		}
+    // Ambil role dari JWT
+    roleRaw := c.Locals("role")
+    role := ""
+    if roleRaw != nil {
+        role = fmt.Sprint(roleRaw)
+    }
 
-		attachment := models.Attachment{
-			FileName:   file.Filename,
-			FileType:   file.Header.Get("Content-Type"),
-			FileUrl:    fmt.Sprintf("/uploads/achievements/%s/%s", id, file.Filename),
-			UploadedAt: time.Now(),
-		}
+    // Hanya mahasiswa dan admin yang boleh upload
+    if role != "mahasiswa" && role != "admin" {
+        return helper.SendError(c, fiber.StatusForbidden, "akses ditolak: hanya mahasiswa atau admin yang bisa upload")
+    }
 
-		if e := achievementSvc.AddAttachment(c.Context(), id, u, attachment); e != nil {
-			return helper.SendError(c, fiber.StatusBadRequest, e.Error())
-		}
+    // Panggil service untuk validasi, tapi hasilnya tidak perlu disimpan
+    if _, err := achievementSvc.GetAchievementDetail(c.Context(), mongoID, userID, role); err != nil {
+        return helper.SendError(c, fiber.StatusForbidden, err.Error())
+    }
 
-		return helper.SendSuccessNoData(c)
-	})
+    // Ambil file dari request
+    file, err := c.FormFile("file")
+    if err != nil {
+        return helper.SendError(c, fiber.StatusBadRequest, "file required")
+    }
+
+    // Buat attachment
+    attachment := models.Attachment{
+        FileName:   file.Filename,
+        FileType:   file.Header.Get("Content-Type"),
+        FileUrl:    fmt.Sprintf("/uploads/achievements/%s/%s", mongoID, file.Filename),
+        UploadedAt: time.Now(),
+    }
+
+    // Simpan attachment via service
+    if err := achievementSvc.AddAttachment(c.Context(), mongoID, userID, attachment); err != nil {
+        return helper.SendError(c, fiber.StatusBadRequest, err.Error())
+    }
+
+    return helper.SendSuccess(c, attachment)
+})
+
 }
 
 // Wrapper untuk fiber.Error

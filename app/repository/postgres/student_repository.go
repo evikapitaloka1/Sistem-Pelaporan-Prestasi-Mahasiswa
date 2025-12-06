@@ -17,6 +17,8 @@ type StudentRepository interface {
 	Create(ctx context.Context, student *models.Student) error
 	UpdateAdvisor(ctx context.Context, studentID uuid.UUID, newAdvisorID uuid.UUID) error
 	FindStudentByUserID(ctx context.Context, userID uuid.UUID) (*models.Student, error)
+	GetStudentIDByUserID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error)
+
 }
 
 type studentRepo struct {
@@ -129,3 +131,16 @@ func (r *studentRepo) FindStudentByUserID(ctx context.Context, userID uuid.UUID)
 
 	return &s, nil
 }
+func (r *studentRepo) GetStudentIDByUserID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+    var studentID uuid.UUID
+    query := `SELECT id FROM students WHERE user_id = $1`
+    err := r.db.QueryRowContext(ctx, query, userID).Scan(&studentID)
+    if err != nil {
+        if errors.Is(err, sql.ErrNoRows) {
+            return uuid.Nil, errors.New("student not found for the given user ID")
+        }
+        return uuid.Nil, err
+    }
+    return studentID, nil
+}
+
