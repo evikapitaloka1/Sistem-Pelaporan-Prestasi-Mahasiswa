@@ -1,61 +1,57 @@
 package helper
 
-import(
-	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
-	"errors"
-) 
+import "github.com/gofiber/fiber/v2"
 
+// Standard Response
+type Response struct {
+	Code    int         `json:"code"`
+	Status  string      `json:"status"`
+	Message string      `json:"message,omitempty"`
+	Data    interface{} `json:"data,omitempty"`
+	Meta    interface{} `json:"meta,omitempty"`
+	Errors  interface{} `json:"errors,omitempty"`
+}
 
-// 200 OK + data
-func SendSuccess(c *fiber.Ctx, data interface{}) error {
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"status": "success",
-		"data":   data,
+func Success(c *fiber.Ctx, data interface{}, message string) error {
+	return c.Status(fiber.StatusOK).JSON(Response{
+		Code:    200,
+		Status:  "OK",
+		Message: message,
+		Data:    data,
 	})
 }
 
-// 200 OK tanpa data
-func SendSuccessNoData(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"status": "success",
-		"data":   nil,
+func Created(c *fiber.Ctx, data interface{}, message string) error {
+	return c.Status(fiber.StatusCreated).JSON(Response{
+		Code:    201,
+		Status:  "Created",
+		Message: message,
+		Data:    data,
 	})
 }
 
-// 201 Created
-func Created(c *fiber.Ctx, data interface{}) error {
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"status": "success",
-		"data":   data,
+func SuccessWithMeta(c *fiber.Ctx, data interface{}, meta interface{}, message string) error {
+	return c.Status(fiber.StatusOK).JSON(Response{
+		Code:    200,
+		Status:  "OK",
+		Message: message,
+		Data:    data,
+		Meta:    meta,
 	})
 }
 
-// Error response
-func SendError(c *fiber.Ctx, status int, message string) error {
-	return c.Status(status).JSON(fiber.Map{
-		"status":  "error",
-		"message": message,
+func Error(c *fiber.Ctx, code int, message string, errs interface{}) error {
+	statusText := "Error"
+	if code == 400 { statusText = "Bad Request" }
+	if code == 401 { statusText = "Unauthorized" }
+	if code == 403 { statusText = "Forbidden" }
+	if code == 404 { statusText = "Not Found" }
+	if code == 500 { statusText = "Internal Server Error" }
+
+	return c.Status(code).JSON(Response{
+		Code:    code,
+		Status:  statusText,
+		Message: message,
+		Errors:  errs,
 	})
-}
-func GetUserID(c *fiber.Ctx) (uuid.UUID, error) {
-
-	raw := c.Locals("userID")
-
-	switch v := raw.(type) {
-	case string:
-		return uuid.Parse(v)
-	case uuid.UUID:
-		return v, nil
-	}
-
-	return uuid.Nil, errors.New("user ID missing from token")
-}
-
-func GetRole(c *fiber.Ctx) (string, error) {
-	role, ok := c.Locals("role").(string)
-	if !ok || role == "" {
-		return "", errors.New("role missing from token")
-	}
-	return role, nil
 }

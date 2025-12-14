@@ -1,13 +1,22 @@
-package main
+// package main
 
-import (
-	"fmt"
-	"golang.org/x/crypto/bcrypt"
-)
+// import (
+// 	"fmt"
+// 	"log"
 
-func main() {
-	password := "12345"
-	hash, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	fmt.Println(string(hash))
-}
-$2a$10$7WBAsg5LQ2s4vc2C0dutT.lANYjp3eWjywSye1UQglbbqaXg7n3AK
+// 	"golang.org/x/crypto/bcrypt"
+// )
+
+// func main() {
+// 	password := "12345" // Ganti password di sini jika mau yang lain
+
+// 	// Generate hash menggunakan Bcrypt dengan Cost standar (10)
+// 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+// 	if err != nil {
+// 		log.Fatal("Gagal membuat hash:", err)
+// 	}
+
+// 	fmt.Printf("Password Asli : %s\n", password)
+// 	fmt.Printf("Bcrypt Hash   : %s\n", string(hashedPassword))
+// }
+// $2a$10$Zmd9BmoZKt/aHkSFOtSd2e3qdQYZDzUre1pginyKmIoHfuJFOSsye

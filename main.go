@@ -2,51 +2,48 @@ package main
 
 import (
 	"log"
-	
-	// Import library untuk memuat file .env
-	"github.com/joho/godotenv" 
-	
-	"github.com/gofiber/fiber/v2"
-	
-	db "uas/database/postgres"
-	mongodb "uas/database/mongo"
+	"os"
 
-	postgresRoutes "uas/route/postgres"
-	mongoRoutes "uas/route/mongo"
+	"sistempelaporan/database"
+	
+	// [PERBAIKAN 1] Import sesuai nama folder di foto ('route')
+	"sistempelaporan/route"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/joho/godotenv"
 )
 
 func main() {
-	// ----------------------------------------------------
-	// FIX: Muat Variabel Lingkungan Global (.env)
-	// ----------------------------------------------------
+	// 1. Load Environment Variables
 	if err := godotenv.Load(); err != nil {
-		log.Println("WARNING: Could not load .env file. Relying on system environment variables.")
+		log.Println("Info: No .env file found, using system environment variables")
 	}
-	log.Println("Environment variables loaded.")
-	// ----------------------------------------------------
+
+	// 2. Connect Databases
+	database.ConnectPostgres()
+	database.ConnectMongo()
+
+	// 3. Init Fiber App
+	app := fiber.New(fiber.Config{
+		AppName: "Sistem Pelaporan Prestasi Mahasiswa API",
+	})
+
 	
-	// 1. Inisialisasi koneksi (Sekarang sudah bisa menemukan DSN dari ENV)
-	db.Connect()
-	mongodb.Connect()
+	// 4. Middlewares Global
+	app.Use(logger.New())
+	app.Use(cors.New())
 
-	// 2. Ambil instance koneksi DB PostgreSQL
-	postgreDB := db.GetDB() 
+	// 5. SETUP ROUTES
+	// [PERBAIKAN 2] Panggil dengan 'route.' (tanpa 's') sesuai nama folder
+	route.SetupRoutes(app)
 
-	// 3. Ambil instance koneksi MongoDB (*mongo.Client)
-	mongoClient := mongodb.GetClient()
-
-	app := fiber.New()
-
-	// 4. Daftarkan Route PostgreSQL
-	postgresRoutes.RegisterRoutes(app, postgreDB, mongoClient)
-
-	// 5. Ambil collection MongoDB untuk route Mongo
-	achievementColl := mongodb.GetCollection("uas", "achievements")
-	mongoRoutes.RegisterRoutesMongo(app, achievementColl, postgreDB)
-	
-	// 6. Jalankan Aplikasi
-	log.Println("Fiber server starting on :8080")
-	if err := app.Listen(":8080"); err != nil {
-		log.Fatalf("Server failed to start: %v", err)
+	// 6. Start Server
+	port := os.Getenv("APP_PORT")
+	if port == "" {
+		port = "3000"
 	}
+	log.Printf("🚀 Server is running on port %s", port)
+	log.Fatal(app.Listen(":" + port))
 }
