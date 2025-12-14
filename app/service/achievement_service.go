@@ -130,19 +130,36 @@ func UpdateAchievement(c *fiber.Ctx) error {
 // --- FR-005: Delete ---
 func DeleteAchievement(c *fiber.Ctx) error {
 	// 1. Ambil User Info dengan Safe Type Assertion
+
+	// Ambil rawUserID
 	rawUserID := c.Locals("user_id")
 	if rawUserID == nil {
-		return helper.Error(c, fiber.StatusUnauthorized, "Token tidak valid atau sesi berakhir", nil)
+		return helper.Error(c, fiber.StatusUnauthorized, "Sesi tidak valid: User ID hilang", nil)
 	}
-	userID := rawUserID.(string)
+	userID, ok := rawUserID.(string) 
+	if !ok {
+		return helper.Error(c, fiber.StatusUnauthorized, "Token error: User ID format salah", nil)
+	}
 
-	rawUserRole := c.Locals("user_role")
+	// [PERBAIKAN UTAMA DI SINI]: Ambil rawUserRole menggunakan kunci "role"
+	// Sesuai dengan permintaan Anda.
+	rawUserRole := c.Locals("role") 
+	
+	// Safety check: Jika role hilang (nil), berikan nilai default "UNKNOWN"
 	if rawUserRole == nil {
-		log.Println("WARNING: user_role is nil, setting to unknown.")
+		log.Println("WARNING: user_role is nil in locals, defaulting to UNKNOWN.")
 		rawUserRole = "UNKNOWN" 
 	}
-	// userRole sekarang pasti "ADMIN" atau "MAHASISWA" (HURUF BESAR SEMUA)
-	userRole := strings.ToUpper(rawUserRole.(string)) 
+	
+	// Konversi role ke string dan amankan
+	roleString, ok := rawUserRole.(string)
+	if !ok {
+		log.Printf("ERROR: User Role type assertion failed, type is %T. Defaulting to UNKNOWN.", rawUserRole)
+		roleString = "UNKNOWN"
+	}
+
+	// Normalisasi Role yang diterima (misal "Admin" menjadi "ADMIN")
+	userRole := strings.ToUpper(roleString)
 
 	achievementID := c.Params("id") // ID PostgreSQL (UUID)
 
@@ -155,24 +172,21 @@ func DeleteAchievement(c *fiber.Ctx) error {
 		return helper.Error(c, fiber.StatusInternalServerError, "Gagal mencari prestasi", err.Error())
 	}
 
-	// 3. Cek Kepemilikan (Role-Based Bypass)
-	// Jika pengguna bukan pemilik (ach.StudentID.String() != userID)
-	if ach.StudentID.String() != userID {
-		// Jika bukan pemilik DAN bukan Admin, tolak.
-		if userRole != "ADMIN" { 
-			return helper.Error(c, fiber.StatusForbidden, "Akses ditolak: Anda bukan pemilik prestasi ini", nil)
-		}
-		// Jika Admin, dia bypass dan lanjut (Force Delete)
+	// --- 3. LOGIC OTORISASI SUPERADMIN (Admin Only) ---
+	
+	// Pengecekan FINAL: Hanya Admin yang diizinkan untuk menghapus.
+	// Sekarang pengecekan ini akan berhasil bagi Admin karena userRole sudah benar.
+	if userRole != "ADMIN" {
+		// Mahasiswa, Dosen, atau role lain yang TIDAK memiliki claim "ADMIN" di token akan diblokir.
+		return helper.Error(c, fiber.StatusForbidden, "Akses ditolak: Hanya Admin yang dapat menghapus data prestasi.", nil)
 	}
 
-	// 4. Cek Pembatasan Status (Mahasiswa vs. Admin)
-	// Jika Role bukan ADMIN DAN status bukan DRAFT, tolak.
-	if userRole != "ADMIN" && ach.Status != model.StatusDraft { 
-		return helper.Error(c, fiber.StatusBadRequest, "Prestasi sudah disubmit/diverifikasi dan tidak dapat dihapus oleh Mahasiswa", nil)
-	}
-	// Admin (Role == ADMIN) akan melewati pengecekan status ini.
+	// JIKA SAMPAI DI SINI, PENGGUNA ADALAH ADMIN.
+	// Bypass penuh berlaku (tidak perlu cek kepemilikan atau status draft).
+	log.Printf("INFO: Admin %s melakukan force soft delete pada prestasi %s", userID, achievementID)
 
-	// 5. Eksekusi Soft Delete Hybrid
+	// 4. Eksekusi Soft Delete Hybrid
+	// ... (kode repository.SoftDeleteAchievementTransaction tetap sama) ...
 	if err := repository.SoftDeleteAchievementTransaction(achievementID, ach.MongoAchievementID); err != nil {
 		if strings.Contains(err.Error(), "not found or already deleted") {
 			return helper.Error(c, fiber.StatusNotFound, "Prestasi tidak ditemukan atau sudah terhapus", nil)

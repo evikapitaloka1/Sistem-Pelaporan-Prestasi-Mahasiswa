@@ -186,9 +186,9 @@ func SoftDeleteAchievementTransaction(postgresID string, mongoHexID string) erro
 	// 1. Soft Delete di PostgreSQL (Reference/Status)
 	pgQuery := `
 		UPDATE achievement_references 
-		SET deleted_at = NOW(),        
-			updated_at = NOW(),        
-			status = 'deleted'         
+		SET deleted_at = NOW(), 
+			updated_at = NOW(), 
+			status = 'deleted' 
 		WHERE id = $1
 	`
 	// Gunakan Exec untuk menjalankan UPDATE
