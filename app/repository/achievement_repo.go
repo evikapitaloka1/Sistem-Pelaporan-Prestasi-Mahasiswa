@@ -223,25 +223,31 @@ func SoftDeleteAchievementTransaction(postgresID string, mongoHexID string) erro
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// 1. Soft Delete di PostgreSQL (Reference/Status)
+	// 1. Soft Delete di PostgreSQL (Reference)
 	pgQuery := `
 		UPDATE achievement_references 
-		SET deleted_at = NOW(), 
-			updated_at = NOW(), 
-			status = 'deleted' 
+		SET deleted_at = NOW(),  -- Kolom yang benar untuk soft delete
+			updated_at = NOW()  
 		WHERE id = $1
 	`
+    // CATATAN: Baris "status = 'deleted'" SUDAH DIHAPUS untuk menghindari conflict ENUM.
+    
 	// Gunakan Exec untuk menjalankan UPDATE
+    // Asumsi database.PostgresDB.Exec berasal dari database/sql
 	result, err := database.PostgresDB.Exec(pgQuery, postgresID)
 	
 	if err != nil {
+		// Error ini kini hanya akan muncul jika kolom deleted_at belum di-ALTER
 		return fmt.Errorf("gagal soft delete di Postgres: %w", err)
 	}
 
-    rowsAffected, _ := result.RowsAffected()
-    if rowsAffected == 0 {
-        return errors.New("achievement reference not found or already deleted")
+	rowsAffected, err := result.RowsAffected()
+    if err != nil {
+        return fmt.Errorf("gagal mendapatkan rows affected: %w", err)
     }
+	if rowsAffected == 0 {
+		return errors.New("achievement reference not found or already deleted")
+	}
 
 	// 2. Soft Delete di MongoDB (Data Detail)
 
@@ -259,7 +265,8 @@ func SoftDeleteAchievementTransaction(postgresID string, mongoHexID string) erro
 	}
 	
 	// Panggil UpdateOne untuk menambahkan field deleted_at di dokumen MongoDB
-	collection := database.MongoD.Collection("achievements") // <-- Menggunakan database.MongoD
+    // Perhatikan penggunaan ctx (wajib untuk MongoDB driver)
+	collection := database.MongoD.Collection("achievements") 
 	_, err = collection.UpdateOne(
 		ctx, 
 		bson.M{"_id": objID}, // Filter berdasarkan ObjectID
@@ -267,8 +274,7 @@ func SoftDeleteAchievementTransaction(postgresID string, mongoHexID string) erro
 	)
 	
 	if err != nil {
-		// PENTING: Jika Mongo gagal, kita asumsikan Postgres sudah sukses.
-		// Service harus menampilkan warning untuk intervensi manual.
+		log.Printf("Gagal soft delete di Mongo (Postgres sukses): %v", err)
 		return fmt.Errorf("gagal soft delete di Mongo (Postgres sukses): %w", err)
 	}
 	
