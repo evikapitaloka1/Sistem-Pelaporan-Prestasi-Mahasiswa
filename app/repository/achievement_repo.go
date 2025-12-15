@@ -326,16 +326,44 @@ func AddAttachmentToMongo(mongoHexID string, attachment model.Attachment) error 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	objID, _ := primitive.ObjectIDFromHex(mongoHexID)
+	objID, err := primitive.ObjectIDFromHex(mongoHexID)
+	if err != nil {
+		return fmt.Errorf("invalid MongoDB ID format: %w", err)
+	}
+
 	collection := database.MongoD.Collection("achievements")
 
-	// Push ke array attachments
+	// --- 1. KOREKSI TAHAP 1: Memastikan 'attachments' bukan null ---
+	// Update ini hanya akan dijalankan jika dokumen ditemukan. 
+	// Kita akan menggunakan $set untuk memastikan 'attachments' adalah array kosong JIKA nilainya null.
+	// Jika nilainya array, $set ini tidak akan mengubahnya menjadi array kosong.
+    
+    // Query ini bertujuan untuk memastikan field 'attachments' ada dan bertipe array.
+    // Jika 'attachments' benar-benar 'null', $set bisa membuatnya menjadi [].
+    // NOTE: MongoDB driver (BSON) biasanya mengirim nil Go sebagai $unset atau null. 
+    // Jika null, $set ini akan bekerja.
+
+    _, err = collection.UpdateOne(
+        ctx,
+        bson.M{"_id": objID, "attachments": nil}, // Filter: ID dan attachments = null
+        bson.M{"$set": bson.M{"attachments": []model.Attachment{}}}, // Action: Set ke array kosong
+    )
+    // Kita tidak perlu memeriksa error di sini karena update ini bersifat pencegahan.
+
+	// --- 2. TAHAP 2: Melakukan $push yang Sesungguhnya ---
 	update := bson.M{
 		"$push": bson.M{"attachments": attachment},
 	}
 
-	_, err := collection.UpdateOne(ctx, bson.M{"_id": objID}, update)
-	return err
+	// Eksekusi Update $push
+	_, err = collection.UpdateOne(ctx, bson.M{"_id": objID}, update)
+	
+	if err != nil {
+		// Log error di sini jika diperlukan
+		return fmt.Errorf("gagal menambahkan attachment: %w", err)
+	}
+	
+	return nil
 }
 // --- FR-012: Status History (Simple Version) ---
 // Mengembalikan riwayat waktu perubahan status berdasarkan kolom timestamp yang ada
