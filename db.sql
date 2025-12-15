@@ -124,3 +124,30 @@ VALUES (gen_random_uuid(), '64d1bd23-3c0f-483a-9c54-a44d8c7a64a7', 'LEC1', 'Comp
 INSERT INTO students (id, user_id, student_id, program_study, academic_year, advisor_id, created_at) 
 VALUES (gen_random_uuid(), 'cecf76ed-e30a-40ca-b602-a6a3d0f3f93f', 'NIM0012025', 'Information Systems', '2025/2026', '23506891-d6d1-4614-87d1-acbf62d0eada', NOW());
 
+
+
+
+-- 0. Hapus Tabel Achievement References lama (jika sudah terlanjur dibuat)
+DROP TABLE IF EXISTS achievement_references;
+
+-- 1. Buat Tipe ENUM Status
+CREATE TYPE achievement_status_type AS ENUM (
+    'draft', 
+    'submitted', 
+    'verified', 
+    'rejected'
+);
+
+-- 2. Buat Tabel Achievement References menggunakan Tipe ENUM
+CREATE TABLE achievement_references (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    mongo_achievement_id VARCHAR(24) NOT NULL,
+    status achievement_status_type DEFAULT 'draft', -- ***TIPE ENUM DIPAKAI DI SINI***
+    submitted_at TIMESTAMP,
+    verified_at TIMESTAMP,
+    verified_by UUID REFERENCES users(id),
+    rejection_note TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

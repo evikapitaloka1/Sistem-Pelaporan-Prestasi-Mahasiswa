@@ -10,6 +10,7 @@ import (
 	"errors"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"github.com/google/uuid"
 )
 
 // --- FR-003: Submit Prestasi (Hybrid Transaction) ---
@@ -165,19 +166,58 @@ func FindAchievementByID(id string) (*model.AchievementReference, error) {
 }
 
 // --- FR-004, FR-007, FR-008: Update Status ---
-func UpdateStatus(id string, status model.AchievementStatus, verifiedBy *string, note string) error {
-	query := `
-		UPDATE achievement_references 
-		SET status = $1, verified_by = $2, rejection_note = $3, 
-		    submitted_at = CASE WHEN $1 = 'submitted' THEN NOW() ELSE submitted_at END,
-			verified_at = CASE WHEN $1 IN ('verified','rejected') THEN NOW() ELSE verified_at END,
-			updated_at = NOW()
-		WHERE id = $4
-	`
-	_, err := database.PostgresDB.Exec(query, status, verifiedBy, note, id)
-	return err
-}
+func UpdateStatus(id string, status model.AchievementStatus, verifiedBy *uuid.UUID, note string) error {
+    
+    statusSubmittedString := "submitted"
+    statusVerifiedString := "verified"
+    statusRejectedString := "rejected"
+    
+    // Asumsi nama tipe ENUM di DB adalah 'achievement_status_type'
+    cleanQuery := `
+        UPDATE achievement_references 
+        SET 
+            status = $1, 
+            verified_by = $2, 
+            rejection_note = $3, 
+            
+            submitted_at = CASE 
+                            WHEN $1 = $4::achievement_status_type THEN NOW() 
+                            ELSE submitted_at 
+                           END,
+            
+            verified_at = CASE 
+                          WHEN $1 = $5::achievement_status_type OR $1 = $6::achievement_status_type THEN NOW() 
+                          ELSE verified_at 
+                          END,
+            
+            updated_at = NOW()
+        WHERE id = $7
+    `
+    
+    // Konversi ID string ke tipe uuid.UUID
+    achievementUUID, err := uuid.Parse(id)
+    if err != nil {
+        return err // Gagal parsing ID UUID
+    }
 
+    // PERBAIKAN 2: Hapus context.Background() jika database.PostgresDB menggunakan database/sql
+    // (Line Number 206)
+    _, err = database.PostgresDB.Exec(cleanQuery, 
+        string(status),                 // $1 (ENUM)
+        verifiedBy,                     // $2 (*uuid.UUID)
+        note,                           // $3 (TEXT)
+        statusSubmittedString,          // $4 (STRING literal)
+        statusVerifiedString,           // $5 (STRING literal)
+        statusRejectedString,           // $6 (STRING literal)
+        achievementUUID,                // $7 (UUID)
+    )
+    
+    if err != nil {
+         log.Printf("DB EXEC ERROR (UpdateStatus): %v", err)
+    }
+
+    return err
+}
 // --- FR-005: Delete (Soft/Hard) ---
 func SoftDeleteAchievementTransaction(postgresID string, mongoHexID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

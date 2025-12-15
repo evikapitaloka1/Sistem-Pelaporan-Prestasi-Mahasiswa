@@ -55,3 +55,6 @@ type Attachment struct {
 	FileType   string    `bson:"fileType" json:"fileType"`
 	UploadedAt time.Time `bson:"uploadedAt" json:"uploadedAt"`
 }
+type RejectRequest struct {
+	RejectionNote string `json:"rejection_note"` // Catatan penolakan
+}

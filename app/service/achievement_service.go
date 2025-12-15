@@ -226,51 +226,113 @@ func RequestVerification(c *fiber.Ctx) error {
 
 // --- FR-007: Verify (Approve) ---
 func VerifyAchievement(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(string)
+	// Ambil userID dari Local (ID user Dosen Wali yang melakukan verifikasi)
+	lecturerUserID := c.Locals("user_id").(string)
 	achievementID := c.Params("id")
-	
-	var input struct { Note string `json:"note"` }
-	c.BodyParser(&input) // Note opsional
 
-	lecturer, err := repository.FindLecturerByUserID(userID)
-	if err != nil { return helper.Error(c, fiber.StatusForbidden, "Bukan dosen", nil) }
-
+	// 1. Validasi Prestasi
 	ach, err := repository.FindAchievementByID(achievementID)
-	if err != nil { return helper.Error(c, fiber.StatusNotFound, "Prestasi tidak ditemukan", nil) }
+	if err != nil { 
+		log.Printf("Achievement not found: %s, Error: %v", achievementID, err)
+		return helper.Error(c, fiber.StatusNotFound, "Prestasi tidak ditemukan", err.Error()) 
+	}
+    
+	// 2. Validasi Status (Harus 'submitted')
+	if ach.Status != model.StatusSubmitted { 
+		return helper.Error(c, fiber.StatusBadRequest, "Prestasi belum diajukan (status harus 'submitted')", nil) 
+	}
+    
+    // 3. [TODO: VALIDASI TAMBAHAN - FR-007]
+    // Dosen Wali HANYA boleh memverifikasi prestasi mahasiswa bimbingannya.
+    // Anda perlu membandingkan ach.StudentID -> Student -> Student.AdvisorID 
+    // dengan Lecturer.ID yang memiliki user_id = lecturerUserID
+    // if !repository.IsLecturerAdvisorForStudent(lecturerUserID, ach.StudentID) {
+    //     return helper.Error(c, fiber.StatusForbidden, "Akses ditolak: Bukan mahasiswa bimbingan Anda", nil)
+    // }
 
-	if ach.Status != model.StatusSubmitted { return helper.Error(c, fiber.StatusBadRequest, "Status bukan submitted", nil) }
-
-	lecIDStr := lecturer.UserID.String()
-	if err := repository.UpdateStatus(achievementID, model.StatusVerified, &lecIDStr, input.Note); err != nil {
-		return helper.Error(c, fiber.StatusInternalServerError, "Gagal verifikasi", err.Error())
+	// 4. Konversi ID Verifikator (Dosen Wali) ke *uuid.UUID
+	lecturerUUID, err := uuid.Parse(lecturerUserID)
+	if err != nil {
+		log.Printf("Error parsing lecturer User ID to UUID: %v", err)
+		return helper.Error(c, fiber.StatusInternalServerError, "Kesalahan format ID verifikator", err.Error())
+	}
+	verifiedByPointer := &lecturerUUID 
+	
+	// 5. Update Status ke Verified
+    // verifiedByPointer dilewatkan sebagai parameter $2 (*uuid.UUID)
+    // note dikosongkan karena ini adalah verifikasi, bukan penolakan
+	if err := repository.UpdateStatus(
+        achievementID, 
+        model.StatusVerified, 
+        verifiedByPointer, 
+        "" /* note kosong */); err != nil {
+		
+		log.Printf("Failed to update status to Verified: %v", err)
+		return helper.Error(c, fiber.StatusInternalServerError, "Gagal verifikasi prestasi", err.Error())
 	}
 
-	return helper.Success(c, nil, "Prestasi berhasil diverifikasi (Verified)")
+	// 6. [TODO: Implementasi FR-007] - Buat notifikasi untuk Mahasiswa
+	// repository.CreateNotification(ach.StudentID, ach.ID, "Prestasi Anda telah diverifikasi")
+
+	return helper.Success(c, nil, "Prestasi berhasil diverifikasi")
 }
 
 // --- FR-008: Reject ---
 func RejectAchievement(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(string)
+	// Ambil userID dari Local (ID user Dosen Wali yang menolak)
+	lecturerUserID := c.Locals("user_id").(string)
 	achievementID := c.Params("id")
 	
-	var input struct { Note string `json:"note"` }
-	if err := c.BodyParser(&input); err != nil { return helper.Error(c, fiber.StatusBadRequest, "Input invalid", nil) }
-	if input.Note == "" { return helper.Error(c, fiber.StatusBadRequest, "Catatan penolakan wajib diisi", nil) }
+	// 1. Parsing Request Body (Rejection Note)
+	var req model.RejectRequest
+	if err := c.BodyParser(&req); err != nil {
+		return helper.Error(c, fiber.StatusBadRequest, "Invalid request body", err.Error())
+	}
+	
+	if req.RejectionNote == "" {
+		return helper.Error(c, fiber.StatusBadRequest, "Catatan penolakan (Rejection Note) wajib diisi", nil)
+	}
 
-	lecturer, err := repository.FindLecturerByUserID(userID)
-	if err != nil { return helper.Error(c, fiber.StatusForbidden, "Bukan dosen", nil) }
-
+	// 2. Validasi Prestasi
 	ach, err := repository.FindAchievementByID(achievementID)
-	if err != nil { return helper.Error(c, fiber.StatusNotFound, "Prestasi tidak ditemukan", nil) }
+	if err != nil { 
+		log.Printf("Achievement not found: %s, Error: %v", achievementID, err)
+		return helper.Error(c, fiber.StatusNotFound, "Prestasi tidak ditemukan", err.Error()) 
+	}
+    
 
-	if ach.Status != model.StatusSubmitted { return helper.Error(c, fiber.StatusBadRequest, "Status bukan submitted", nil) }
+	if ach.Status != model.StatusSubmitted { 
+		return helper.Error(c, fiber.StatusBadRequest, "Prestasi belum diajukan (status harus 'submitted')", nil) 
+	}
+    
+    // 4. [TODO: VALIDASI TAMBAHAN - FR-008]
+    // Dosen Wali HANYA boleh menolak prestasi mahasiswa bimbingannya.
 
-	lecIDStr := lecturer.UserID.String()
-	if err := repository.UpdateStatus(achievementID, model.StatusRejected, &lecIDStr, input.Note); err != nil {
+	// 5. Konversi ID Verifikator (Dosen Wali) ke *uuid.UUID
+    // Ini adalah KOREKSI FINAL untuk Error Baris 298
+	lecturerUUID, err := uuid.Parse(lecturerUserID)
+	if err != nil {
+		log.Printf("Error parsing lecturer User ID to UUID: %v", err)
+		return helper.Error(c, fiber.StatusInternalServerError, "Kesalahan format ID verifikator", err.Error())
+	}
+	verifiedByPointer := &lecturerUUID // Tipe: *uuid.UUID. Ini yang benar.
+	
+
+    // Parameter verifiedByPointer (UUID) dan req.RejectionNote (TEXT) dilewatkan.
+	if err := repository.UpdateStatus(
+        achievementID, 
+        model.StatusRejected, 
+        verifiedByPointer, 
+        req.RejectionNote); err != nil {
+		
+		log.Printf("Failed to update status to Rejected: %v", err)
 		return helper.Error(c, fiber.StatusInternalServerError, "Gagal menolak prestasi", err.Error())
 	}
 
-	return helper.Success(c, nil, "Prestasi ditolak (Rejected)")
+	
+	// repository.CreateNotification(ach.StudentID, ach.ID, "Prestasi Anda ditolak: " + req.RejectionNote)
+
+	return helper.Success(c, nil, "Prestasi berhasil ditolak dengan catatan")
 }
 
 // --- FR-Baru: Upload Attachment ---
