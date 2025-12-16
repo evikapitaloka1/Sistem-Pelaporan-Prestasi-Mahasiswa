@@ -75,30 +75,47 @@ func GetAchievementTypeDistribution() ([]map[string]interface{}, error) {
 
     // Pipeline Aggregation MongoDB: Group by 'achievementType' & Count
     pipeline := mongo.Pipeline{
+        
+        // KOREKSI KRITIS: 1. Tambahkan $match untuk mengecualikan achievementType yang kosong
+        {{Key: "$match", Value: bson.D{
+            {Key: "achievementType", Value: bson.D{
+                {Key: "$ne", Value: ""}, // achievementType TIDAK SAMA DENGAN string kosong
+            }},
+        }}},
+        
+        // 2. Grouping (hanya data yang valid)
         {{Key: "$group", Value: bson.D{
             {Key: "_id", Value: "$achievementType"}, 
             {Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
         }}},
+        
+        // 3. (Opsional) Sortir hasilnya
+        {{Key: "$sort", Value: bson.D{{Key: "count", Value: -1}}}},
     }
 
     cursor, err := collection.Aggregate(ctx, pipeline)
     if err != nil { return nil, err }
-    
+    defer cursor.Close(ctx) // Pastikan cursor ditutup
+
     var results []map[string]interface{}
     for cursor.Next(ctx) {
         var item struct {
-            ID    string `bson:"_id"`
-            Count int    `bson:"count"`
+            ID      string `bson:"_id"`
+            Count int      `bson:"count"`
         }
         if err := cursor.Decode(&item); err != nil { continue }
         
-        // Handle jika tipe kosong
-        typeName := item.ID
-        if typeName == "" { typeName = "Uncategorized" }
-
+        // Karena kita sudah memfilter di $match, kita hanya perlu menggunakan item.ID
         results = append(results, map[string]interface{}{
-            "type": typeName, "count": item.Count,
+            "type": item.ID, // item.ID sekarang pasti memiliki nilai yang valid
+            "count": item.Count,
         })
     }
+    
+    // Jika tidak ada hasil sama sekali, kembalikan slice kosong []
+    if len(results) == 0 {
+        return make([]map[string]interface{}, 0), nil
+    }
+
     return results, nil
 }

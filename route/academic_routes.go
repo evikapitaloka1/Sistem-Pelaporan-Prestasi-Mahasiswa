@@ -9,30 +9,30 @@ import (
 
 
 func AcademicRoutes(router fiber.Router) {
-    // --- Group Students ---
-    // Semua endpoint di bawah ini butuh Login (JWT)
-    students := router.Group("/students", middleware.Protected())
-    
-    // FR-View Student List
-    students.Get("/", service.GetStudents)
-    
-    // FR-View Student Detail
-    students.Get("/:id", service.GetStudentByID)
-    
-    // FR-View Student Achievements
-    students.Get("/:id/achievements", service.GetStudentAchievements)
-    
-    // FR-Assign Advisor (Hanya Admin yang boleh)
-    // Sesuai FR-009: Admin manage users/profiles
-    students.Put("/:id/advisor", middleware.CheckPermission("Admin"), service.UpdateStudentAdvisor)
+	// ... (imports)
+    readAllAccess := middleware.CheckPermission("user:read_all") 
 
-    // --- Group Lecturers ---
-    // Semua endpoint di bawah ini butuh Login (JWT)
-    lecturers := router.Group("/lecturers", middleware.Protected())
-    
-    // FR-View Lecturer List
-    lecturers.Get("/", service.GetLecturers)
-    
-    // FR-View Advisees (Mahasiswa Bimbingan)
-    lecturers.Get("/:id/advisees", service.GetLecturerAdvisees)
+	// Group Students
+	students := router.Group("/students", middleware.Protected())
+	
+	// FR-View Student List (Admin/Dosen)
+	students.Get("/", middleware.AuthorizeResource("student_read"), service.GetStudents)
+
+	// FR-View Student Detail (Otorisasi 3-Tingkat)
+	students.Get("/:id", middleware.AuthorizeResource("student_read"), service.GetStudentByID)
+
+	// FR-View Student Achievements (Otorisasi 3-Tingkat)
+	students.Get("/:id/achievements", middleware.AuthorizeResource("student_read"), service.GetStudentAchievements)
+
+	// FR-Assign Advisor (Admin Only)
+	students.Put("/:id/advisor", middleware.CheckPermission("user:manage"), service.UpdateStudentAdvisor)
+
+	// Group Lecturers
+	lecturers := router.Group("/lecturers", middleware.Protected())
+	
+	// FR-View Lecturer List (Admin/Dosen)
+	lecturers.Get("/", readAllAccess, service.GetLecturers)
+	
+	// FR-View Advisees (Self-Access Dosen)
+	lecturers.Get("/:id/advisees", middleware.CanAccessSelf(), service.GetLecturerAdvisees)
 }

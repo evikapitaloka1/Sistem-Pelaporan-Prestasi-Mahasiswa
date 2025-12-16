@@ -3,6 +3,7 @@ package repository
 import (
     "sistempelaporan/app/model"
     "sistempelaporan/database"
+    "database/sql"
 )
 
 // --- Students ---
@@ -120,14 +121,53 @@ func GetLecturerAdvisees(lecturerID string) ([]map[string]interface{}, error) {
     if err != nil { return nil, err }
     defer rows.Close()
 
-    var advisees []map[string]interface{}
+    // KOREKSI KRITIS: Inisialisasi sebagai slice kosong (bukan nil)
+    advisees := make([]map[string]interface{}, 0) 
+    
     for rows.Next() {
         var id, stdID, prodi, year, name string
-        rows.Scan(&id, &stdID, &prodi, &year, &name)
+        if err := rows.Scan(&id, &stdID, &prodi, &year, &name); err != nil { 
+            // Jika ada error scanning, kita harus memastikan defer rows.Close() dipanggil
+            // dan kita kembalikan error.
+            return nil, err
+        }
+        
         advisees = append(advisees, map[string]interface{}{
             "id": id, "student_id": stdID, "program_study": prodi, 
             "academic_year": year, "full_name": name,
         })
     }
-    return advisees, nil
+    
+    // Pastikan rows.Err() diperiksa setelah loop
+    if rows.Err() != nil {
+        return nil, rows.Err()
+    }
+    
+    // Jika tidak ada data, ia mengembalikan slice kosong, yang di-marshal ke JSON sebagai []
+    return advisees, nil 
+}
+func GetStudentIDByUserID(userID string) (string, error) {
+    query := `SELECT id FROM students WHERE user_id = $1`
+    var studentID string
+    
+    err := database.PostgresDB.QueryRow(query, userID).Scan(&studentID)
+    
+    if err == sql.ErrNoRows {
+        return "", nil // User bukan mahasiswa
+    }
+    return studentID, err
+}
+
+// Menangani error: undefined: repository.ExtractAdvisorID
+// Fungsi helper untuk mendapatkan Advisor ID dari hasil GetStudentDetail (map)
+func ExtractAdvisorID(student map[string]interface{}) string {
+    var advisorID string
+    if idRaw, ok := student["advisor_id"]; ok && idRaw != nil {
+        if idPtr, isPtr := idRaw.(*string); isPtr && idPtr != nil {
+            advisorID = *idPtr
+        } else if idStr, isStr := idRaw.(string); isStr {
+            advisorID = idStr
+        }
+    }
+    return advisorID
 }

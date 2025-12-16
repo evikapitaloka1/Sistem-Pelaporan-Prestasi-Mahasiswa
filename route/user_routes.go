@@ -2,7 +2,7 @@ package route
 
 import (
 	"sistempelaporan/app/service"
-	"sistempelaporan/middleware" // Middleware Protected ada di sini
+	"sistempelaporan/middleware"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -10,35 +10,42 @@ import (
 // UsersRoutes mengelompokkan semua endpoint manajemen user
 // Endpoint: /api/v1/users/*
 func UsersRoutes(r fiber.Router) {
-	// Grouping URL: /api/v1/users
-	users := r.Group("/users") 
-
-	// Middleware akses: Hanya memerlukan login (Protected), tanpa permission check spesifik.
-	// Jika non-admin mencoba mengakses, sistem akan mengizinkan.
+	users := r.Group("/users", middleware.Protected()) // Pasang Protected di group level
 	
-	protected := middleware.Protected()
+	// Otorisasi untuk fungsi Admin (Create, List All, Role Update, Delete)
+	adminAccess := middleware.CheckPermission("user:manage")
+
+	// Otorisasi untuk fungsi Self-Access (Update/View Detail)
+	// Middleware ini mengecek: Admin ATAU User ID == URL ID
+	selfAccess := middleware.CanAccessSelf() 
 	
 	// A. List Users
+	// Otorisasi: Admin Only
 	// GET /api/v1/users
-	users.Get("/", protected, service.GetAllUsers) 
+	users.Get("/", adminAccess, service.GetAllUsers) 
 
 	// B. Get User Detail
+	// Otorisasi: Admin atau Self-Access
 	// GET /api/v1/users/:id
-	users.Get("/:id", protected, service.GetUserByID) 
+	users.Get("/:id", selfAccess, service.GetUserByID) 
 
 	// C. Create User
+	// Otorisasi: Admin Only
 	// POST /api/v1/users
-	users.Post("/", protected, service.CreateNewUser) 
+	users.Post("/", adminAccess, service.CreateNewUser) 
 
 	// D. Update User General
+	// Otorisasi: Admin atau Self-Access
 	// PUT /api/v1/users/:id
-	users.Put("/:id", protected, service.UpdateUser) 
+	users.Put("/:id", selfAccess, service.UpdateUser) 
 
 	// E. Delete User (Soft Delete)
+	// Otorisasi: Admin Only (Walaupun Mahasiswa bisa delete diri sendiri, sebaiknya dikelola Admin)
 	// DELETE /api/v1/users/:id
-	users.Delete("/:id", protected, service.DeleteUser) 
+	users.Delete("/:id", adminAccess, service.DeleteUser) 
 
 	// F. Update User Role
+	// Otorisasi: Admin Only
 	// PUT /api/v1/users/:id/role
-	users.Put("/:id/role", protected, service.UpdateUserRole) 
+	users.Put("/:id/role", adminAccess, service.UpdateUserRole) 
 }

@@ -91,3 +91,56 @@ func CheckPermission(requiredPerm string) fiber.Handler {
 		return c.Next()
 	}
 }
+func CanAccessSelf() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Asumsi ID di URL adalah User ID.
+		requestedID := c.Params("id") 
+		currentUserID := c.Locals("user_id").(string)
+		role := c.Locals("role").(string)
+
+		if strings.EqualFold(role, "Admin") {
+			return c.Next()
+		}
+		if requestedID == currentUserID {
+			return c.Next()
+		}
+		
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "Akses ditolak: Hanya dapat mengakses data user sendiri"})
+	}
+}
+
+// =======================================================
+// 3B. AuthorizeResource: Middleware Otorisasi Relasional (Untuk /students/:id)
+// =======================================================
+func AuthorizeResource(mode string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		resourceID := c.Params("id") // ID Student/Achievement
+		currentUserID := c.Locals("user_id").(string)
+		role := c.Locals("role").(string)
+
+		if strings.EqualFold(role, "Admin") {
+			return c.Next()
+		}
+        
+        // --- STUDENT READ (Otorisasi 3-Tingkat) ---
+        if mode == "student_read" {
+            // Cek Self-Access Mahasiswa
+            actualStudentID, _ := repository.GetStudentIDByUserID(currentUserID) 
+            if actualStudentID == resourceID {
+                return c.Next() // Akses Mahasiswa Ybs
+            }
+            
+            // Cek Dosen Wali
+            student, err := repository.GetStudentDetail(resourceID) 
+            if err == nil && student != nil {
+                advisorID := repository.ExtractAdvisorID(student) // Butuh Repo Helper
+                if advisorID == currentUserID {
+                    return c.Next() // Akses Dosen Wali
+                }
+            }
+        
+        } // ... logic for achievement_write and achievement_verify follows
+        
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "Akses ditolak: Anda tidak memiliki hak untuk mengakses resource ini"})
+	}
+}

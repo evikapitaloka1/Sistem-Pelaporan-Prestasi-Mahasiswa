@@ -18,32 +18,74 @@ import (
 // --- FR-003: Submit Prestasi ---
 func SubmitAchievement(c *fiber.Ctx) error {
 	userID := c.Locals("user_id").(string)
+	role := c.Locals("role").(string) // Ambil role dari Locals
 	
-	var req model.AchievementMongo
+    // PERHATIAN: Asumsi req.StudentID akan diisi dari body jika ada.
+	var req model.AchievementMongo 
 	if err := c.BodyParser(&req); err != nil {
 		return helper.Error(c, fiber.StatusBadRequest, "Input tidak valid", err.Error())
 	}
 
-	// Identifikasi Mahasiswa
-	student, err := repository.FindStudentByUserID(userID)
-	if err != nil {
-		return helper.Error(c, fiber.StatusForbidden, "Profil mahasiswa tidak ditemukan", err.Error())
-	}
-
-	// Prepare Data
-	refID := uuid.New()
-	ref := model.AchievementReference{
-		ID:        refID,
-		StudentID: student.ID,
-	}
-	req.StudentID = student.ID.String() 
+	var targetStudentID uuid.UUID
 	
-	// Simpan ke Repo
+	// 1. LOGIKA PENENTUAN MAHASISWA TARGET BERDASARKAN ROLE
+	if strings.EqualFold(role, "Admin") {
+		// KASUS ADMIN
+		if req.StudentID == "" {
+			// Admin harus secara eksplisit menentukan ID Mahasiswa target
+			return helper.Error(c, fiber.StatusBadRequest, "Admin wajib menyertakan 'studentId' Mahasiswa target di body request.", nil)
+		}
+		
+		// Konversi StudentID dari body (string) ke UUID
+		studentUUID, err := uuid.Parse(req.StudentID)
+		if err != nil {
+			return helper.Error(c, fiber.StatusBadRequest, "Format Student ID target tidak valid.", nil)
+		}
+		targetStudentID = studentUUID
+        
+        // Opsional: Cek apakah ID Mahasiswa target benar-benar ada di database
+
+	} else if strings.EqualFold(role, "Mahasiswa") {
+		// KASUS MAHASISWA
+		
+		// Identifikasi Mahasiswa dari token (Logic lama, tapi sekarang aman)
+		student, err := repository.FindStudentByUserID(userID)
+		if err != nil || student.ID == uuid.Nil { // Mencegah panic jika student nil
+			// Ini adalah error yang muncul jika user bukan mahasiswa
+			return helper.Error(c, fiber.StatusForbidden, "Profil mahasiswa tidak ditemukan atau terhubung.", nil)
+		}
+		targetStudentID = student.ID
+
+	} else {
+        // Role lain (Dosen Wali, dll) tidak diizinkan membuat prestasi
+        return helper.Error(c, fiber.StatusForbidden, "Akses ditolak: Hanya Mahasiswa dan Admin yang dapat membuat prestasi.", nil)
+    }
+
+	// 2. Prepare Data (Menggunakan targetStudentID yang sudah diverifikasi)
+	refID := uuid.New()
+    now := time.Now()
+
+    // Data Reference (Postgres)
+	ref := model.AchievementReference{
+		ID: refID,
+		StudentID: targetStudentID, // <--- ID yang benar (dari Admin/Mahasiswa)
+        Status:    model.StatusDraft, // Asumsi status awal adalah DRAFT
+        // Tambahkan CreatedAt dan UpdatedAt jika diperlukan di struct Anda
+        // CreatedAt: now,
+        // UpdatedAt: now,
+	}
+    
+    // Data Detail (Mongo)
+	req.StudentID = targetStudentID.String() // Pastikan detail Mongo juga memiliki ID yang benar
+    req.CreatedAt = now
+    req.UpdatedAt = now
+	
+	// 3. Simpan ke Repo
 	if err := repository.CreateAchievement(&ref, &req); err != nil {
 		return helper.Error(c, fiber.StatusInternalServerError, "Gagal menyimpan prestasi", err.Error())
 	}
 
-	return helper.Created(c, nil, "Prestasi berhasil dibuat")
+	return helper.Created(c, fiber.Map{"id": refID.String()}, "Prestasi berhasil dibuat")
 }
 
 // --- FR-010, FR-006: View Achievements ---
@@ -107,26 +149,61 @@ func GetAchievementDetail(c *fiber.Ctx) error {
 
 // --- FR-Baru: Update Content (Edit Draft) ---
 func UpdateAchievement(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(string)
-	achievementID := c.Params("id")
-	
-	var newData model.AchievementMongo
-	if err := c.BodyParser(&newData); err != nil { return helper.Error(c, fiber.StatusBadRequest, "Request body invalid", nil) }
+    userID := c.Locals("user_id").(string)
+    role := c.Locals("role").(string)
+    achievementID := c.Params("id")
+    
+    // 1. Binding Data Baru
+    var newData model.AchievementMongo
+    if err := c.BodyParser(&newData); err != nil { 
+        return helper.Error(c, fiber.StatusBadRequest, "Request body invalid", nil) 
+    }
 
-	ach, err := repository.FindAchievementByID(achievementID)
-	if err != nil { return helper.Error(c, fiber.StatusNotFound, "Data tidak ditemukan", nil) }
+    // 2. Cari Data Achievement (Reference)
+    ach, err := repository.FindAchievementByID(achievementID)
+    if err != nil { 
+        return helper.Error(c, fiber.StatusNotFound, "Data prestasi tidak ditemukan", nil) 
+    }
+    
+    // 3. LOGIKA OTORISASI (Menggunakan early return)
+    // Asumsikan Admin memiliki hak penuh untuk mengupdate resource apa pun.
+    isAuthorized := false
+    
+    if strings.EqualFold(role, "Admin") {
+        isAuthorized = true // Admin selalu diotorisasi
+    
+    } else {
+        // KASUS NON-ADMIN (Hanya Mahasiswa yang bisa update, harus pemilik)
+        
+        student, findErr := repository.FindStudentByUserID(userID)
+        // Jika user yang login bukan Mahasiswa (Dosen, dll) atau tidak terhubung
+        if findErr != nil || student.ID == uuid.Nil {
+            // Jika user tidak ditemukan sebagai mahasiswa, biarkan isAuthorized = false
+            isAuthorized = false 
+        } else if ach.StudentID == student.ID {
+            // Jika user adalah Mahasiswa pemilik
+            isAuthorized = true
+        }
+    }
+    
+    if !isAuthorized {
+        return helper.Error(c, fiber.StatusForbidden, "Akses ditolak: Anda tidak memiliki hak edit resource ini.", nil)
+    }
+    
+    // 4. Cek Status (Harus Draft, Berlaku untuk Admin dan Mahasiswa)
+    if ach.Status != model.StatusDraft { 
+        return helper.Error(c, fiber.StatusBadRequest, "Prestasi hanya dapat diedit saat berstatus Draft.", nil) 
+    }
 
-	student, _ := repository.FindStudentByUserID(userID)
-	if ach.StudentID != student.ID { return helper.Error(c, fiber.StatusForbidden, "Akses ditolak", nil) }
-	if ach.Status != model.StatusDraft { return helper.Error(c, fiber.StatusBadRequest, "Hanya status draft yang bisa diedit", nil) }
-
-	if err := repository.UpdateAchievementDetail(ach.MongoAchievementID, newData); err != nil {
-		return helper.Error(c, fiber.StatusInternalServerError, "Gagal update data", err.Error())
-	}
-
-	return helper.Success(c, nil, "Data berhasil diperbarui")
+    // 5. Update Timestamp dan Eksekusi
+    // ... (Set updated_at di newData)
+    
+    if err := repository.UpdateAchievementDetail(ach.MongoAchievementID, newData); err != nil {
+        return helper.Error(c, fiber.StatusInternalServerError, "Gagal update data", err.Error())
+    }
+    
+    return helper.Success(c, nil, "Data berhasil diperbarui")
 }
-
 // --- FR-005: Delete ---
 func DeleteAchievement(c *fiber.Ctx) error {
 	// 1. Ambil User Info dengan Safe Type Assertion
@@ -206,17 +283,54 @@ func DeleteAchievement(c *fiber.Ctx) error {
 // --- FR-004: Request Verification ---
 func RequestVerification(c *fiber.Ctx) error {
 	userID := c.Locals("user_id").(string)
+	// Ambil role dari Locals. Pastikan middleware Anda menyediakannya.
+	role := c.Locals("role").(string) 
+	
 	achievementID := c.Params("id")
 
+	// 1. Cari Data Achievement
 	ach, err := repository.FindAchievementByID(achievementID)
-	if err != nil { return helper.Error(c, fiber.StatusNotFound, "Prestasi tidak ditemukan", err.Error()) }
+	if err != nil { 
+		return helper.Error(c, fiber.StatusNotFound, "Prestasi tidak ditemukan", err.Error()) 
+	}
+	
+	// 2. Cek Status DRAFT (Berlaku untuk semua role)
+	if ach.Status != model.StatusDraft { 
+		return helper.Error(c, fiber.StatusBadRequest, "Hanya status draft yang bisa diajukan", nil) 
+	}
 
-	student, err := repository.FindStudentByUserID(userID)
-	if err != nil { return helper.Error(c, fiber.StatusForbidden, "Akses ditolak", err.Error()) }
+	// 3. LOGIKA OTORISASI (Admin vs Mahasiswa)
+	isAuthorized := false
 
-	if ach.StudentID != student.ID { return helper.Error(c, fiber.StatusForbidden, "Bukan milik anda", nil) }
-	if ach.Status != model.StatusDraft { return helper.Error(c, fiber.StatusBadRequest, "Hanya status draft yang bisa diajukan", nil) }
+	// Cek jika user adalah ADMIN
+	if strings.EqualFold(role, "Admin") {
+		// Jika Admin, langsung diizinkan untuk mengajukan verifikasi.
+		isAuthorized = true 
+	} 
+	
+	// Cek jika user adalah MAHASISWA
+	if strings.EqualFold(role, "Mahasiswa") {
+		// Cari ID Mahasiswa yang login
+		student, findErr := repository.FindStudentByUserID(userID)
+		
+		// Jika ada error (misal 'no rows' yang tidak diharapkan untuk role Mahasiswa)
+		// atau ID Mahasiswa tidak valid.
+		if findErr != nil || student.ID == uuid.Nil { 
+			return helper.Error(c, fiber.StatusForbidden, "Akses ditolak: Profil mahasiswa tidak ditemukan.", findErr.Error()) 
+		}
+		
+		// Cek kepemilikan
+		if ach.StudentID == student.ID {
+			isAuthorized = true
+		}
+	}
+	
+	// 4. Final Check Otorisasi
+	if !isAuthorized { 
+		return helper.Error(c, fiber.StatusForbidden, "Akses ditolak: Anda bukan pemilik prestasi ini.", nil) 
+	}
 
+	// 5. Update Status
 	if err := repository.UpdateStatus(achievementID, model.StatusSubmitted, nil, ""); err != nil {
 		return helper.Error(c, fiber.StatusInternalServerError, "Gagal update status", err.Error())
 	}
@@ -337,32 +451,58 @@ func RejectAchievement(c *fiber.Ctx) error {
 
 // --- FR-Baru: Upload Attachment ---
 func UploadAttachment(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(string)
-	achievementID := c.Params("id")
+    userID := c.Locals("user_id").(string)
+    role := c.Locals("role").(string) // <--- AMBIL ROLE
+    achievementID := c.Params("id")
 
-	file, err := c.FormFile("file")
-	if err != nil { return helper.Error(c, fiber.StatusBadRequest, "File wajib diupload", nil) }
+    file, err := c.FormFile("file")
+    if err != nil { return helper.Error(c, fiber.StatusBadRequest, "File wajib diupload", nil) }
 
-	filename := fmt.Sprintf("%s_%s", uuid.New().String(), filepath.Base(file.Filename))
-	savePath := fmt.Sprintf("./uploads/%s", filename)
-	
-	if err := c.SaveFile(file, savePath); err != nil { return helper.Error(c, fiber.StatusInternalServerError, "Gagal menyimpan file", err.Error()) }
+    // ... (File saving logic remains the same) ...
+    filename := fmt.Sprintf("%s_%s", uuid.New().String(), filepath.Base(file.Filename))
+    savePath := fmt.Sprintf("./uploads/%s", filename)
+    
+    if err := c.SaveFile(file, savePath); err != nil { return helper.Error(c, fiber.StatusInternalServerError, "Gagal menyimpan file", err.Error()) }
 
-	ach, err := repository.FindAchievementByID(achievementID)
-	if err != nil { return helper.Error(c, fiber.StatusNotFound, "Data tidak ditemukan", nil) }
-	
-	student, _ := repository.FindStudentByUserID(userID)
-	if ach.StudentID != student.ID { return helper.Error(c, fiber.StatusForbidden, "Akses ditolak", nil) }
-	if ach.Status != model.StatusDraft { return helper.Error(c, fiber.StatusBadRequest, "Harus status draft", nil) }
+    // 1. Cari Achievement
+    ach, err := repository.FindAchievementByID(achievementID)
+    if err != nil { return helper.Error(c, fiber.StatusNotFound, "Data tidak ditemukan", nil) }
+    
+    // 2. LOGIKA OTORISASI (Mencegah Panic)
+    isAuthorized := false
 
-	fileURL := "http://localhost:3000/uploads/" + filename
-	att := model.Attachment{FileName: file.Filename, FileURL: fileURL, FileType: filepath.Ext(filename), UploadedAt: time.Now()}
-	
-	if err := repository.AddAttachmentToMongo(ach.MongoAchievementID, att); err != nil {
-		return helper.Error(c, fiber.StatusInternalServerError, "Gagal update database", err.Error())
-	}
+    if strings.EqualFold(role, "Admin") {
+        isAuthorized = true // Admin selalu diizinkan
+    } else if strings.EqualFold(role, "Mahasiswa") {
+        // KASUS MAHASISWA: Harus pemilik
+        
+        student, findErr := repository.FindStudentByUserID(userID)
+        
+        // Cek error/nil dengan aman
+        if findErr == nil && student.ID != uuid.Nil && ach.StudentID == student.ID {
+            isAuthorized = true
+        }
+    }
+    
+    // 3. Final Check Otorisasi
+    if !isAuthorized { 
+        return helper.Error(c, fiber.StatusForbidden, "Akses ditolak: Anda tidak memiliki hak untuk mengupload attachment ini.", nil)
+    }
 
-	return helper.Created(c, fiber.Map{"url": fileURL}, "File berhasil diupload")
+    // 4. Cek Status (Harus Draft, Berlaku untuk Admin dan Mahasiswa)
+    if ach.Status != model.StatusDraft { 
+        return helper.Error(c, fiber.StatusBadRequest, "Hanya status draft yang bisa diubah (upload attachment).", nil) 
+    }
+
+    // ... (Logic untuk update database) ...
+    fileURL := "http://localhost:3000/uploads/" + filename
+    att := model.Attachment{FileName: file.Filename, FileURL: fileURL, FileType: filepath.Ext(filename), UploadedAt: time.Now()}
+    
+    if err := repository.AddAttachmentToMongo(ach.MongoAchievementID, att); err != nil {
+        return helper.Error(c, fiber.StatusInternalServerError, "Gagal update database", err.Error())
+    }
+
+    return helper.Created(c, fiber.Map{"url": fileURL}, "File berhasil diupload")
 }
 
 // --- FR-012: Get History ---
