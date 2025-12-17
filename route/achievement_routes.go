@@ -33,11 +33,11 @@ func AchievementRoutes(r fiber.Router) {
 	ach.Post("/:id/verify", middleware.CheckPermission("achievement:verify"), service.VerifyAchievement)
 
 	// 8. POST Reject (Dosen Wali Reject)
-	ach.Post("/:id/reject", middleware.CheckPermission("achievement:verify"), service.RejectAchievement)
+	ach.Post("/:id/reject", middleware.CheckPermission("achievement:reject"), service.RejectAchievement)
 
 	// 9. POST Upload Attachments
 	ach.Post("/:id/attachments", middleware.CheckPermission("achievement:update"), service.UploadAttachment)
 	
 	// 10. GET History
-	ach.Get("/:id/history", middleware.CheckPermission("achievement:read"), service.GetHistory)
+	ach.Get("/:id/history", middleware.AuthorizeResource("student_read"), service.GetHistory)
 }
