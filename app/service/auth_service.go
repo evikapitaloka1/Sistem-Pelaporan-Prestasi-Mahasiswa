@@ -24,7 +24,7 @@ func getJWTSecret() []byte {
 
 // 1. Login
 func Login(c *fiber.Ctx) error {
-	// 1. Parsing Request (Username & Password)
+	// 1. Parsing Request
 	var input struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -34,7 +34,7 @@ func Login(c *fiber.Ctx) error {
 		return helper.Error(c, fiber.StatusBadRequest, "Input tidak valid", nil)
 	}
 
-	// 2. Cari User by Username
+	// 2. Cari User berdasarkan Username
 	user, err := repository.FindUserByUsername(input.Username)
 	if err != nil {
 		return helper.Error(c, fiber.StatusUnauthorized, "Username atau password salah", nil)
@@ -45,23 +45,42 @@ func Login(c *fiber.Ctx) error {
 		return helper.Error(c, fiber.StatusUnauthorized, "Username atau password salah", nil)
 	}
 
-	// 4. Ambil Permissions (untuk Token & Response)
+	// 4. Ambil Permissions dari Database
 	perms, _ := repository.GetPermissionsByRoleID(user.RoleID.String())
 
-	// 5. Generate Token
+	// --- PERBAIKAN: JAMIN ADMIN MEMILIKI HAK "user:read_all" ---
+	if strings.EqualFold(user.Role.Name, "Admin") {
+		hasReadAll := false
+		for _, p := range perms {
+			if p == "user:read_all" {
+				hasReadAll = true
+				break
+			}
+		}
+		
+		// Jika Admin tidak punya permission ini di DB, tambahkan secara paksa ke list
+		if !hasReadAll {
+			perms = append(perms, "user:read_all")
+		}
+		
+		// Anda bisa menambahkan permission krusial lain di sini jika dibutuhkan
+		// perms = append(perms, "user:manage")
+	}
+
+	// 5. Generate Token dengan list permissions yang sudah fix
 	accessToken, refreshToken, err := generateTokens(user, perms)
 	if err != nil {
 		return helper.Error(c, fiber.StatusInternalServerError, "Gagal generate token", nil)
 	}
 
-	// 6. Return Response (Struktur Sesuai SRS Hal 13)
+	// 6. Return Response (Sesuai model response)
 	response := model.LoginResponse{
 		Token:        accessToken,
 		RefreshToken: refreshToken,
 		User: model.UserResponse{
 			ID:          user.ID.String(),
 			Username:    user.Username,
-			FullName:    user.FullName, // Sesuai field 'fullName' di Appendix
+			FullName:    user.FullName,
 			Role:        user.Role.Name,
 			Permissions: perms,
 		},
