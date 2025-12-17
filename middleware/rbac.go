@@ -7,6 +7,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
+	
 )
 
 // Gunakan key yang SAMA dengan di auth_service.go
@@ -92,55 +93,84 @@ func CheckPermission(requiredPerm string) fiber.Handler {
 	}
 }
 func CanAccessSelf() fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		// Asumsi ID di URL adalah User ID.
-		requestedID := c.Params("id") 
-		currentUserID := c.Locals("user_id").(string)
-		role := c.Locals("role").(string)
+    return func(c *fiber.Ctx) error {
+        requestedID := c.Params("id") // ID dari URL (Lecturer ID: 23506891...)
+        currentUserID := c.Locals("user_id").(string) // ID dari Token (User ID: 64d1bd23...)
+        role := c.Locals("role").(string)
 
-		if strings.EqualFold(role, "Admin") {
-			return c.Next()
-		}
-		if requestedID == currentUserID {
-			return c.Next()
-		}
-		
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "Akses ditolak: Hanya dapat mengakses data user sendiri"})
-	}
+        // 1. Admin selalu bebas akses
+        if strings.EqualFold(role, "Admin") {
+            return c.Next()
+        }
+
+        // 2. Cek jika ID di URL sama dengan User ID (untuk Mahasiswa/User umum)
+        if requestedID == currentUserID {
+            return c.Next()
+        }
+
+        // 3. KHUSUS DOSEN WALI: Cek relasi User ID ke Lecturer ID
+        if strings.EqualFold(role, "Dosen Wali") {
+            // Kita cari tahu: "Siapa Lecturer ID milik User yang sedang login ini?"
+            lecturerID, err := repository.GetLecturerIDByUserID(currentUserID)
+            
+            // Jika Lecturer ID hasil query sama dengan ID yang diminta di URL, beri akses
+            if err == nil && requestedID == lecturerID {
+                return c.Next()
+            }
+        }
+        
+        return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+            "message": "Akses ditolak: Anda hanya diperbolehkan mengakses data milik Anda sendiri",
+        })
+    }
 }
-
 // =======================================================
-// 3B. AuthorizeResource: Middleware Otorisasi Relasional (Untuk /students/:id)
+// 3B. AuthorizeResource: Middleware Otorisasi Relasional 
 // =======================================================
 func AuthorizeResource(mode string) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		resourceID := c.Params("id") // ID Student/Achievement
-		currentUserID := c.Locals("user_id").(string)
-		role := c.Locals("role").(string)
+    return func(c *fiber.Ctx) error {
+        resourceID := c.Params("id")
+        currentUserID := c.Locals("user_id").(string)
+        role := c.Locals("role").(string)
 
-		if strings.EqualFold(role, "Admin") {
-			return c.Next()
-		}
-        
-        // --- STUDENT READ (Otorisasi 3-Tingkat) ---
+        if strings.EqualFold(role, "Admin") { return c.Next() }
+
+        var targetStudentID string
+        ach, err := repository.FindAchievementByID(resourceID)
+        if err == nil && ach != nil {
+            targetStudentID = ach.StudentID.String()
+        } else {
+            targetStudentID = resourceID
+        }
+
         if mode == "student_read" {
-            // Cek Self-Access Mahasiswa
-            actualStudentID, _ := repository.GetStudentIDByUserID(currentUserID) 
-            if actualStudentID == resourceID {
-                return c.Next() // Akses Mahasiswa Ybs
-            }
-            
-            // Cek Dosen Wali
-            student, err := repository.GetStudentDetail(resourceID) 
-            if err == nil && student != nil {
-                advisorID := repository.ExtractAdvisorID(student) // Butuh Repo Helper
-                if advisorID == currentUserID {
-                    return c.Next() // Akses Dosen Wali
+            // PERBAIKAN UNTUK DOSEN WALI
+            if strings.EqualFold(role, "Dosen Wali") {
+                // 1. Ambil ID Lecturer berdasarkan User ID yang sedang login
+                lecturerID, err := repository.GetLecturerIDByUserID(currentUserID)
+                if err != nil {
+                    return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "Akses ditolak: Data dosen tidak ditemukan"})
+                }
+
+                student, err := repository.GetStudentDetail(targetStudentID)
+                if err == nil && student != nil {
+                    // 2. Bandingkan ID Lecturer (bukan User ID)
+                    if repository.ExtractAdvisorID(student) == lecturerID {
+                        return c.Next()
+                    }
                 }
             }
-        
-        } // ... logic for achievement_write and achievement_verify follows
-        
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "Akses ditolak: Anda tidak memiliki hak untuk mengakses resource ini"})
-	}
+            
+            if strings.EqualFold(role, "Mahasiswa") {
+                mhsID, _ := repository.GetStudentIDByUserID(currentUserID)
+                if mhsID == targetStudentID {
+                    return c.Next()
+                }
+            }
+        }
+
+        return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+            "message": "Akses ditolak: Anda tidak memiliki hak untuk mengakses resource ini",
+        })
+    }
 }

@@ -560,3 +560,17 @@ func GetAchievementHistory(id string) (map[string]interface{}, error) {
         "history": logs,
     }, nil
 }
+// GetLecturerIDByUserID mencari ID Dosen di tabel lecturers berdasarkan ID User yang login
+func GetLecturerIDByUserID(userID string) (string, error) {
+    var lecturerID string
+    query := `SELECT id FROM lecturers WHERE user_id = $1`
+    
+    err := database.PostgresDB.QueryRow(query, userID).Scan(&lecturerID)
+    if err != nil {
+        if err == sql.ErrNoRows {
+            return "", fmt.Errorf("user ini bukan merupakan dosen")
+        }
+        return "", err
+    }
+    return lecturerID, nil
+}
