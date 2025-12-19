@@ -24,7 +24,7 @@ func AchievementRoutes(r fiber.Router) {
     ach.Put("/:id", middleware.CheckPermission("achievement:update"), middleware.AuthorizeResource("student_read"), service.UpdateAchievement)
 
     // 5. DELETE Achievement
-    ach.Delete("/:id", middleware.CheckPermission("achievement:delete"), service.DeleteAchievement)
+    ach.Delete("/:id", middleware.CheckPermission("achievement:delete"),middleware.AuthorizeResource("student_read"), service.DeleteAchievement)
 
     // 6. POST Submit Verification (Ubah ke Status Submitted)
     // Sekarang menggunakan permission spesifik: achievement:submit

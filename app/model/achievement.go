@@ -53,6 +53,7 @@ type AchievementMongo struct {
 	Tags            []string               `bson:"tags" json:"tags"`
 	Points          int                    `bson:"points" json:"points"`
 	CreatedAt       time.Time              `bson:"createdAt" json:"createdAt"`
+	CompetitionTier string `bson:"competitionTier" json:"competitionTier"`
 	UpdatedAt       time.Time              `bson:"updatedAt" json:"updatedAt"`
 	DeletedAt 		*time.Time `db:"deleted_at" json:"deleted_at"`
 }
