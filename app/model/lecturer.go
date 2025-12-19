@@ -6,7 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Specific Profile for Lecturer
 type Lecturer struct {
 	ID         uuid.UUID `json:"id"`
 	UserID     uuid.UUID `json:"user_id"`

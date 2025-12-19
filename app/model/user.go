@@ -5,7 +5,6 @@ import (
 
 	"github.com/google/uuid"
 )
-// 2. Main User Table
 
 
 type User struct {
@@ -23,14 +22,14 @@ type User struct {
 type LoginResponse struct {
     Token        string      `json:"token"`
     RefreshToken string      `json:"refreshToken"`
-    User         UserResponse `json:"user"` // Gunakan struct khusus biar rapi
+    User         UserResponse `json:"user"` 
 }
 
-// Struktur User khusus untuk Response Login (Sesuai Appendix)
+
 type UserResponse struct {
     ID          string   `json:"id"`
     Username    string   `json:"username"`
-    FullName    string   `json:"fullName"` // [PERBAIKAN]: Sesuai sample SRS
+    FullName    string   `json:"fullName"` 
     Role        string   `json:"role"`
-    Permissions []string `json:"permissions"` // [PERBAIKAN]: Ditambahkan
+    Permissions []string `json:"permissions"` 
 }

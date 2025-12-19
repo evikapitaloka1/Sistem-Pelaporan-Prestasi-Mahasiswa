@@ -11,10 +11,10 @@ import (
 	"strings"
 )
 
-// --- Login & Auth ---
+
 
 func FindUserByUsername(username string) (*model.User, error) {
-	// Query join ke tabel roles untuk ambil nama role sekalian
+
 	query := `
 		SELECT u.id, u.username, u.email, u.password_hash, u.full_name, u.role_id, r.name 
 		FROM users u
@@ -25,7 +25,7 @@ func FindUserByUsername(username string) (*model.User, error) {
 	var user model.User
 	var roleName string
 
-	// Scan data dari database
+	
 	row := database.PostgresDB.QueryRow(query, username)
 	err := row.Scan(
 		&user.ID, &user.Username, &user.Email, &user.PasswordHash, 
@@ -42,8 +42,7 @@ func FindUserByUsername(username string) (*model.User, error) {
 	user.Role.Name = roleName
 	return &user, nil
 }
-// [BARU] Untuk endpoint GET /auth/profile
-// File: app/repository/user_repository.go
+
 
 func FindUserByID(id string) (*model.User, error) {
     query := `
@@ -57,7 +56,7 @@ func FindUserByID(id string) (*model.User, error) {
 
     var user model.User
     var roleName string
-    var roleDescription string // <-- Variabel baru untuk menampung deskripsi
+    var roleDescription string 
 
     row := database.PostgresDB.QueryRow(query, id)
     err := row.Scan(
@@ -70,7 +69,7 @@ func FindUserByID(id string) (*model.User, error) {
         &user.CreatedAt, 
         &user.UpdatedAt, 
         &roleName,
-        &roleDescription,    // <-- Scan deskripsi
+        &roleDescription,    
     )
 
     if err != nil {
@@ -82,7 +81,7 @@ func FindUserByID(id string) (*model.User, error) {
 
     user.Role.ID = user.RoleID
     user.Role.Name = roleName
-    user.Role.Description = roleDescription // <-- Set Description
+    user.Role.Description = roleDescription 
     
     return &user, nil
 }
@@ -112,7 +111,7 @@ func GetPermissionsByRoleID(roleID string) ([]string, error) {
 
 	return permissions, nil
 }
-// --- Helper Identitas ---
+
 
 func FindStudentByUserID(userID string) (*model.Student, error) {
 	query := `SELECT id, student_id, program_study, advisor_id FROM students WHERE user_id = $1`
@@ -136,7 +135,7 @@ func FindLecturerByUserID(userID string) (*model.Lecturer, error) {
 	return &l, nil
 }
 
-// --- FR-009: Manage Users (Transaction) ---
+
 
 func CreateUserWithProfile(user *model.User, student *model.Student, lecturer *model.Lecturer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -148,7 +147,7 @@ func CreateUserWithProfile(user *model.User, student *model.Student, lecturer *m
 	}
 	defer tx.Rollback()
 
-	// A. Insert ke tabel Users
+	
 	userQuery := `
 		INSERT INTO users (id, username, email, password_hash, full_name, role_id, is_active, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -159,12 +158,12 @@ func CreateUserWithProfile(user *model.User, student *model.Student, lecturer *m
 	).Scan(&user.ID)
 
 	if err != nil {
-        // 💡 FIX 2.1: Pemeriksaan error Foreign Key spesifik
+        
         if strings.Contains(err.Error(), "users_role_id_fkey") {
-            // Kita kembalikan error yang lebih jelas agar service bisa menangkapnya
+           
             return errors.New("Role ID yang dimasukkan tidak ditemukan di tabel roles.")
         }
-        // 💡 FIX 2.2: Pemeriksaan error NOT NULL (jika password_hash kosong)
+       
         if strings.Contains(err.Error(), "violates not-null constraint") {
             return errors.New("Kolom wajib (NOT NULL) kosong, periksa password, username, atau email.")
         }
@@ -172,7 +171,7 @@ func CreateUserWithProfile(user *model.User, student *model.Student, lecturer *m
 		return err
 	}
 
-	// B. Insert Student
+	
 	if student != nil {
 		studentQuery := `
 			INSERT INTO students (id, user_id, student_id, program_study, academic_year, created_at)
@@ -186,9 +185,9 @@ func CreateUserWithProfile(user *model.User, student *model.Student, lecturer *m
 		}
 	}
 
-	// C. Insert Lecturer
+	
 	if lecturer != nil {
-		// ... (kode insert lecturer)
+	
 	}
 
 	return tx.Commit()
@@ -199,15 +198,8 @@ func AssignAdvisorToStudent(studentID string, advisorID string) error {
 	_, err := database.PostgresDB.Exec(query, advisorID, studentID)
 	return err
 }
-// --- FR-009: Tambahan CRUD User (Admin) ---
 
-// 1. Mengambil Semua User (GET /api/v1/users)
-// File: app/repository/user_repository.go
 
-// 1. Mengambil Semua User (GET /api/v1/users)
-// File: app/repository/user_repository.go
-
-// File: app/repository/user_repository.go
 
 func FindAllUsers() ([]model.User, error) {
     query := `
@@ -229,7 +221,7 @@ func FindAllUsers() ([]model.User, error) {
     for rows.Next() {
         var user model.User
         var roleName string
-        var roleDescription string // <-- Variabel baru untuk menampung deskripsi
+        var roleDescription string 
         
         // Scan data per baris
         err := rows.Scan(
@@ -239,10 +231,10 @@ func FindAllUsers() ([]model.User, error) {
             &user.FullName, 
             &user.RoleID, 
             &roleName,
-            &user.IsActive,   // <-- FIX: Scan IsActive
-            &user.CreatedAt,  // <-- FIX: Scan CreatedAt
-            &user.UpdatedAt,  // <-- FIX: Scan UpdatedAt
-            &roleDescription, // <-- FIX: Scan Description
+            &user.IsActive,   
+            &user.CreatedAt,  
+            &user.UpdatedAt,  
+            &roleDescription, 
         )
         if err != nil {
             return nil, err
@@ -250,14 +242,13 @@ func FindAllUsers() ([]model.User, error) {
 
         user.Role.ID = user.RoleID
         user.Role.Name = roleName
-        user.Role.Description = roleDescription // <-- Set Description
+        user.Role.Description = roleDescription 
         users = append(users, user)
     }
 
     return users, nil
 }
-// 2. Update Data User General (PUT /api/v1/users/:id)
-// Hanya update nama, username, email. Password biasanya dipisah endpointnya.
+
 func UpdateUserGeneral(id string, username, fullName, email string) error {
     query := `
         UPDATE users 
@@ -268,7 +259,7 @@ func UpdateUserGeneral(id string, username, fullName, email string) error {
     return err
 }
 
-// 3. Update Role User (PUT /api/v1/users/:id/role)
+
 func UpdateUserRole(id string, roleID string) error {
     query := `
         UPDATE users 
@@ -279,8 +270,7 @@ func UpdateUserRole(id string, roleID string) error {
     return err
 }
 
-// 4. Soft Delete User (DELETE /api/v1/users/:id)
-// Kita tidak menghapus baris, tapi set is_active = false agar data relasi aman
+
 func DeleteUserByID(id string) error {
     query := `
         UPDATE users 
@@ -290,42 +280,35 @@ func DeleteUserByID(id string) error {
     _, err := database.PostgresDB.Exec(query, id)
     return err
 }
-// =======================================================
-// BLACKLIST (SIMULASI REDIS/CACHE)
-// =======================================================
 
-// tokenBlacklist: Menyimpan token yang sudah di-logout
+
 var tokenBlacklist = make(map[string]time.Time)
 var mutex sync.RWMutex
 
-// SetTokenBlacklist mencatat token ke blacklist dengan TTL
-// Fungsi ini DIEKSPOR karena dimulai dengan huruf kapital (S)
 func SetTokenBlacklist(token string, ttl time.Duration) error {
 	mutex.Lock()
 	defer mutex.Unlock()
 	
-	// Set waktu token akan 'kadaluarsa' dari blacklist.
+
 	tokenBlacklist[token] = time.Now().Add(ttl)
 	
 	return nil
 }
 
-// IsTokenBlacklisted mengecek apakah token ada di blacklist dan masih aktif
-// Fungsi ini DIEKSPOR karena dimulai dengan huruf kapital (I)
 func IsTokenBlacklisted(token string) bool {
 	mutex.RLock()
 	defer mutex.RUnlock()
 
 	expTime, found := tokenBlacklist[token]
 	if !found {
-		return false // Token tidak ada di Blacklist
+		return false 
 	}
 
-	// Cek apakah token Blacklist-nya sendiri belum kadaluarsa
+	
 	if time.Now().Before(expTime) {
-		return true // Token sudah di-logout (Blacklisted)
+		return true 
 	}
 
-	// Jika sudah lewat expTime, tokenBlacklist bisa dihapus (namun ini memerlukan goroutine)
-	return false // Token dianggap sudah tidak di Blacklist
+	
+	return false 
 }

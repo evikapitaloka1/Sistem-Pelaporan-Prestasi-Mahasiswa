@@ -11,11 +11,9 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// --- PostgreSQL Analytics ---
 
-// 1. Top 5 Mahasiswa dengan Prestasi Terbanyak (FR-011: Top Mahasiswa)
 func GetTopStudentsStats(targetID string, role string) ([]map[string]interface{}, error) {
-	// Menyiapkan klausa WHERE dinamis berdasarkan Aktor
+	
 	filterClause := "WHERE ar.status = 'verified' AND ar.deleted_at IS NULL "
 	var params []interface{}
 
@@ -54,7 +52,7 @@ func GetTopStudentsStats(targetID string, role string) ([]map[string]interface{}
 	return results, nil
 }
 
-// 2. Tren Prestasi per Bulan (FR-011: Total per Periode)
+
 func GetMonthlyTrendStats(targetID string, role string) ([]map[string]interface{}, error) {
 	filterClause := "WHERE status IN ('submitted', 'verified') AND deleted_at IS NULL "
 	var params []interface{}
@@ -63,7 +61,7 @@ func GetMonthlyTrendStats(targetID string, role string) ([]map[string]interface{
 		filterClause += "AND student_id = $1 "
 		params = append(params, targetID)
 	} else if role == "Dosen Wali" {
-		// Join ke tabel students untuk filter berdasarkan advisor_id
+		
 		filterClause = `
             JOIN students s ON achievement_references.student_id = s.id 
             WHERE status IN ('submitted', 'verified') 
@@ -94,23 +92,21 @@ func GetMonthlyTrendStats(targetID string, role string) ([]map[string]interface{
 	return results, nil
 }
 
-// --- MongoDB Analytics ---
 
-// 3. Distribusi Tipe & Tingkat (FR-011: Total per Tipe & Tingkat Kompetisi)
 func GetAchievementTypeDistribution(targetID string, role string) ([]map[string]interface{}, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	collection := database.MongoD.Collection("achievements")
 
-	// Match filter awal
+	
 	matchStage := bson.D{{Key: "achievementType", Value: bson.D{{Key: "$ne", Value: ""}}}}
 	
-	// Tambahkan filter relasional berdasarkan data yang dikirim dari Postgres (targetID)
+	
 	if role == "Mahasiswa" {
 		matchStage = append(matchStage, bson.E{Key: "student_id", Value: targetID})
 	} else if role == "Dosen Wali" {
-		// Note: Di MongoDB biasanya disimpan list student_id milik bimbingan atau advisor_id langsung
+		
 		matchStage = append(matchStage, bson.E{Key: "advisor_id", Value: targetID})
 	}
 
@@ -119,7 +115,7 @@ func GetAchievementTypeDistribution(targetID string, role string) ([]map[string]
 		{{Key: "$group", Value: bson.D{
 			{Key: "_id", Value: bson.D{
 				{Key: "type", Value: "$achievementType"},
-				{Key: "level", Value: "$competitionTier"}, // Menjawab FR-011 Point 4
+				{Key: "level", Value: "$competitionTier"}, 
 			}}, 
 			{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
 		}}},

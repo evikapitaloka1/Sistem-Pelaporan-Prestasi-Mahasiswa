@@ -25,7 +25,7 @@ func ConnectMongo() {
 		log.Fatal("Failed to create MongoDB client:", err)
 	}
 
-	// Ping database untuk memastikan koneksi hidup
+	
 	err = client.Ping(ctx, nil)
 	if err != nil {
 		log.Fatal("Failed to ping MongoDB:", err)

@@ -6,10 +6,10 @@ import (
 	"log"
 	"os"
 
-	_ "github.com/lib/pq" // Driver PostgreSQL (wajib ada tanda underscore)
+	_ "github.com/lib/pq" 
 )
 
-// Global variable untuk akses database dari repo lain
+
 var PostgresDB *sql.DB
 
 func ConnectPostgres() {
@@ -24,17 +24,17 @@ func ConnectPostgres() {
 	)
 
 	var err error
-	// Membuka koneksi dengan driver 'postgres'
+	
 	PostgresDB, err = sql.Open("postgres", dsn)
 	if err != nil {
 		log.Fatal("Failed to open connection to PostgreSQL:", err)
 	}
 
-	// Cek apakah koneksi benar-benar hidup (Ping)
+	
 	err = PostgresDB.Ping()
 	if err != nil {
 		log.Fatal("Failed to ping PostgreSQL:", err)
 	}
 
-	log.Println("✅ Connected to PostgreSQL successfully (Native SQL)")
+	log.Println(" Connected to PostgreSQL successfully (Native SQL)")
 }

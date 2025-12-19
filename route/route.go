@@ -7,15 +7,13 @@ import (
 )
 
 func SetupRoutes(app *fiber.App) {
-	// 1. Middleware Global
+	
 	app.Use(cors.New())
 	app.Use(logger.New())
 
-	// 2. Grouping API v1
+
 	api := app.Group("/api/v1")
 
-	// 3. Panggil Route Module Lain
-	// Kita passing variable 'api' ke fungsi-fungsi ini agar terdaftar
 	AuthRoutes(api)        
 	AchievementRoutes(api) 
 	AcademicRoutes(api)

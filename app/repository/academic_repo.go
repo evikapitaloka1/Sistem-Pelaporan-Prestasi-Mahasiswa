@@ -6,9 +6,7 @@ import (
     "database/sql"
 )
 
-// --- Students ---
 
-// GET /api/v1/students
 func GetAllStudents() ([]map[string]interface{}, error) {
     query := `
         SELECT s.id, s.student_id, s.program_study, s.academic_year, u.full_name, u.email
@@ -33,7 +31,7 @@ func GetAllStudents() ([]map[string]interface{}, error) {
     return students, nil
 }
 
-// GET /api/v1/students/:id
+
 func GetStudentDetail(id string) (map[string]interface{}, error) {
     query := `
         SELECT s.id, s.student_id, s.program_study, s.academic_year, s.advisor_id, 
@@ -61,8 +59,6 @@ func GetStudentDetail(id string) (map[string]interface{}, error) {
     }, nil
 }
 
-// GET /api/v1/students/:id/achievements
-// Mengambil prestasi spesifik milik student tertentu
 func GetAchievementsByStudentID(studentID string) ([]model.AchievementReference, error) {
     query := `
         SELECT id, student_id, mongo_achievement_id, status, created_at, submitted_at, verified_at
@@ -83,9 +79,7 @@ func GetAchievementsByStudentID(studentID string) ([]model.AchievementReference,
     return list, nil
 }
 
-// --- Lecturers ---
 
-// GET /api/v1/lecturers
 func GetAllLecturers() ([]map[string]interface{}, error) {
     query := `
         SELECT l.id, l.lecturer_id, l.department, u.full_name, u.email
@@ -108,8 +102,7 @@ func GetAllLecturers() ([]map[string]interface{}, error) {
     return lecturers, nil
 }
 
-// GET /api/v1/lecturers/:id/advisees
-// Mengambil daftar mahasiswa yang dibimbing oleh dosen tertentu
+
 func GetLecturerAdvisees(lecturerID string) ([]map[string]interface{}, error) {
     query := `
         SELECT s.id, s.student_id, s.program_study, s.academic_year, u.full_name
@@ -121,14 +114,13 @@ func GetLecturerAdvisees(lecturerID string) ([]map[string]interface{}, error) {
     if err != nil { return nil, err }
     defer rows.Close()
 
-    // KOREKSI KRITIS: Inisialisasi sebagai slice kosong (bukan nil)
+   
     advisees := make([]map[string]interface{}, 0) 
     
     for rows.Next() {
         var id, stdID, prodi, year, name string
         if err := rows.Scan(&id, &stdID, &prodi, &year, &name); err != nil { 
-            // Jika ada error scanning, kita harus memastikan defer rows.Close() dipanggil
-            // dan kita kembalikan error.
+           
             return nil, err
         }
         
@@ -138,12 +130,12 @@ func GetLecturerAdvisees(lecturerID string) ([]map[string]interface{}, error) {
         })
     }
     
-    // Pastikan rows.Err() diperiksa setelah loop
+    
     if rows.Err() != nil {
         return nil, rows.Err()
     }
     
-    // Jika tidak ada data, ia mengembalikan slice kosong, yang di-marshal ke JSON sebagai []
+    
     return advisees, nil 
 }
 func GetStudentIDByUserID(userID string) (string, error) {
@@ -153,13 +145,12 @@ func GetStudentIDByUserID(userID string) (string, error) {
     err := database.PostgresDB.QueryRow(query, userID).Scan(&studentID)
     
     if err == sql.ErrNoRows {
-        return "", nil // User bukan mahasiswa
+        return "", nil 
     }
     return studentID, err
 }
 
-// Menangani error: undefined: repository.ExtractAdvisorID
-// Fungsi helper untuk mendapatkan Advisor ID dari hasil GetStudentDetail (map)
+
 func ExtractAdvisorID(student map[string]interface{}) string {
     var advisorID string
     if idRaw, ok := student["advisor_id"]; ok && idRaw != nil {
