@@ -7,12 +7,9 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// UsersRoutes mengelompokkan semua endpoint manajemen user
-// Endpoint: /api/v1/users/*
+
 func UsersRoutes(r fiber.Router) {
-	users := r.Group("/users", middleware.Protected()) // Pasang Protected di group level
-	
-	// Otorisasi untuk fungsi Admin (Create, List All, Role Update, Delete)
+	users := r.Group("/users", middleware.Protected()) 
 	adminAccess := middleware.CheckPermission("user:manage")
 	selfAccess := middleware.CanAccessSelf() 
 	users.Get("/", adminAccess, service.GetAllUsers) 
